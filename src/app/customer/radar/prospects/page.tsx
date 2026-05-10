@@ -37,6 +37,7 @@ import {
   History,
   Download,
   Link2 as LinkIcon,
+  Upload,
 } from 'lucide-react';
 import {
   getProspectCompaniesV2,
@@ -53,6 +54,7 @@ import {
   type CreateProspectContactInput,
   type ProspectEnrichmentItemResult,
 } from '@/actions/radar-v2';
+import { ImportWizardDialog } from '@/components/radar/import-wizard-dialog';
 import { executeSkill } from '@/actions/skills';
 import { SKILL_NAMES } from '@/lib/skills/names';
 import { saveContent } from '@/actions/marketing';
@@ -444,6 +446,7 @@ export default function RadarProspectsPage() {
     search: '',
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [showImportWizard, setShowImportWizard] = useState(false);
 
   // 外联记录看板（P4）
   const [outreachRecords, setOutreachRecords] = useState<OutreachRecordItem[]>([]);
@@ -1582,6 +1585,22 @@ export default function RadarProspectsPage() {
           <span className="font-medium text-[#0B1B2B]">
             {companies.filter(c => c.tier === 'C').length}
           </span>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            onClick={() => setShowImportWizard(true)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--ci-border)] bg-white text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <Upload size={13} />
+            导入线索
+          </button>
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--ci-border)] bg-white text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+          >
+            <Filter size={13} />
+            筛选
+          </button>
         </div>
       </div>
 
@@ -3561,6 +3580,13 @@ export default function RadarProspectsPage() {
         </aside>
       </div>
       </> )} {/* end outreachView === 'companies' */}
+
+      {/* Import Wizard Dialog */}
+      <ImportWizardDialog
+        open={showImportWizard}
+        onOpenChange={setShowImportWizard}
+        onImportComplete={() => loadData()}
+      />
     </div>
   );
 }
