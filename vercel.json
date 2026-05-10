@@ -20,6 +20,7 @@
     { "path": "/api/cron/prospect-enrich", "schedule": "30 * * * *" },
     { "path": "/api/cron/radar-exa-enrich", "schedule": "0 */6 * * *" },
     { "path": "/api/cron/web-crawl", "schedule": "*/5 * * * *" },
-    { "path": "/api/cron/asset-process", "schedule": "*/1 * * * *" }
+    { "path": "/api/cron/asset-process", "schedule": "*/1 * * * *" },
+    { "path": "/api/cron/batch-import-process", "schedule": "*/2 * * * *" }
   ]
 }

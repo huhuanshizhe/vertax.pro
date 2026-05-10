@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
   previewFeatures = ["driverAdapters"]
 }
 
@@ -23,38 +23,39 @@ model Tenant {
   updatedAt   DateTime  @updatedAt
   deletedAt   DateTime?
 
-  users              User[]
-  products           Product[]
-  seoContents        SeoContent[]
-  seoAudits          SeoAudit[]
-  socialPosts        SocialPost[]
-  socialAccounts     SocialAccount[]
-  leads              Lead[]
-  campaigns          Campaign[]
-  categories         ContentCategory[]
-  websiteConfigs     WebsiteConfig[]
-  activities         Activity[]
-  notifications      Notification[]
-  assetFolders       AssetFolder[]
-  assets             Asset[]
-  apiKeys            ApiKey[]
-  companyProfile     CompanyProfile?
-  assetChunks        AssetChunk[]
-  evidences          Evidence[]
-  brandGuidelines    BrandGuideline[]
-  icpSegments        ICPSegment[]
-  personas           Persona[]
-  messagingMatrices  MessagingMatrix[]
+  users               User[]
+  products            Product[]
+  seoContents         SeoContent[]
+  seoAudits           SeoAudit[]
+  socialPosts         SocialPost[]
+  socialAccounts      SocialAccount[]
+  leads               Lead[]
+  campaigns           Campaign[]
+  categories          ContentCategory[]
+  websiteConfigs      WebsiteConfig[]
+  activities          Activity[]
+  notifications       Notification[]
+  assetFolders        AssetFolder[]
+  assets              Asset[]
+  apiKeys             ApiKey[]
+  companyProfile      CompanyProfile?
+  assetChunks         AssetChunk[]
+  evidences           Evidence[]
+  brandGuidelines     BrandGuideline[]
+  icpSegments         ICPSegment[]
+  personas            Persona[]
+  messagingMatrices   MessagingMatrix[]
   // Phase 3
-  artifactVersions   ArtifactVersion[]
-  contentBriefs      ContentBrief[]
-  chatConversations  ChatConversation[]
-  prospectCompanies  ProspectCompany[]
+  artifactVersions    ArtifactVersion[]
+  contentBriefs       ContentBrief[]
+  chatConversations   ChatConversation[]
+  prospectCompanies   ProspectCompany[]
+  importBatches       ImportBatch[]
   radarDailySnapshots RadarDailySnapshot[]
   // Web crawl queue
-  crawlQueues        CrawlQueue[]
+  crawlQueues         CrawlQueue[]
   // Asset processing queue
-  assetProcessQueues AssetProcessQueue[]
+  assetProcessQueues  AssetProcessQueue[]
 }
 
 model WebsiteConfig {
@@ -172,6 +173,7 @@ model User {
   tasksCreated      ArtifactTask[]     @relation("TaskCreator")
   tasksAssigned     ArtifactTask[]     @relation("TaskAssignee")
   chatConversations ChatConversation[]
+  importBatches     ImportBatch[]
 }
 
 model Role {
@@ -355,16 +357,16 @@ model SeoContent {
   deletedAt       DateTime?
 
   // Phase 3 扩展
-  briefId          String?
-  brief            ContentBrief?           @relation(fields: [briefId], references: [id], onDelete: SetNull)
-  outline          Json? // { sections: [{ heading, keyPoints }] }
-  evidenceRefs     String[] // 引用的 Evidence id
-  schemaJson       Json? // Schema.org 结构化数据(FAQPage JSON-LD)
-  geoVersion       String? // GEO-optimized short version (300-500 words, for AI citation)
+  briefId      String?
+  brief        ContentBrief? @relation(fields: [briefId], references: [id], onDelete: SetNull)
+  outline      Json? // { sections: [{ heading, keyPoints }] }
+  evidenceRefs String[] // 引用的 Evidence id
+  schemaJson   Json? // Schema.org 结构化数据(FAQPage JSON-LD)
+  geoVersion   String? // GEO-optimized short version (300-500 words, for AI citation)
 
   // Auto-publish grace period (24h window for AI-generated content)
-  autoPublishAt    DateTime? // Non-null = awaiting publish, cron will auto-publish when reached
-  generatedBy      String? // "ai" | "human" | null, marks content origin
+  autoPublishAt DateTime? // Non-null = awaiting publish, cron will auto-publish when reached
+  generatedBy   String? // "ai" | "human" | null, marks content origin
 
   pushRecords      PushRecord[] // 推送记录
   contentLinks     RadarContentLink[] // 获客雷达内容联动
@@ -932,6 +934,40 @@ enum OpportunityStage {
   LOST // 丢单
 }
 
+// ==================== 批量导入枚举 ====================
+
+enum ImportBatchStatus {
+  PARSING // 文件解析中
+  PREVIEWING // 预览/去重分析中
+  IMPORTING // 正式写入中
+  ENRICHING // 补全中
+  COMPLETED // 全部完成
+  FAILED // 异常终止
+  PAUSED // 人工暂停
+}
+
+enum ImportBatchItemStatus {
+  PENDING // 等待处理
+  PREVIEWING // 预览阶段
+  IMPORTING // 正在写入
+  IMPORTED // 已写入 ProspectCompany
+  DUPLICATE // 去重命中
+  ENRICHING // 正在补全
+  ENRICHED // 补全完成
+  FAILED // 失败
+}
+
+enum EnrichmentDepth {
+  BASIC // 基础: 官网 + 联系人
+  DEEP // 深度: 基础 + AI 分析
+}
+
+enum ImportFileFormat {
+  XLSX
+  CSV
+  PASTE
+}
+
 // ==================== 数据源目录====================
 
 model RadarSource {
@@ -1120,17 +1156,16 @@ model ProspectCompany {
   city        String?
   industry    String?
   companySize String?
-    description String?
+  description String?
 
   // AI 评估结论
-  matchReasons      Json? // 匹配理由列表
-  approachAngle     String?
+  matchReasons  Json? // 匹配理由列表
+  approachAngle String?
 
-  enrichmentStatus String? // pending | in_progress | completed | failed
-  lastEnrichedAt   DateTime?
-  tenant Tenant @relation(fields: [tenantId], references: [id])
+  enrichmentStatus  String? // pending | in_progress | completed | failed
+  lastEnrichedAt    DateTime?
+  tenant            Tenant    @relation(fields: [tenantId], references: [id])
   outreachArtifacts Json? // 持久化外联方案 { email: { subject, body }, whatsapp: { message }, ... }
-
 
   // 分类与标签
   tier String? // A | B | C
@@ -1140,6 +1175,10 @@ model ProspectCompany {
   sourceType        String? // tender | maps | directory | tradeshow | hiring | manual
   sourceCandidateId String? // 来自哪个候选
   sourceUrl         String?
+
+  // 批量导入追溯 (软引用, 主追溯通过 ImportBatchItem.prospectCompanyId)
+  importBatchId     String? // 最近一次导入的 batch ID
+  importBatchItemId String? // 最近一次导入的 item ID
 
   // 跟进状态
   status          String    @default("new") // new | contacted | qualified | converted | lost
@@ -1155,6 +1194,8 @@ model ProspectCompany {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
+
+  @@index([importBatchId])
 }
 
 // ==================== 正式联系人====================
@@ -1187,6 +1228,62 @@ model ProspectContact {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   deletedAt DateTime?
+}
+
+// ==================== 批量导入 ====================
+
+model ImportBatch {
+  id              String            @id @default(cuid())
+  tenantId        String
+  createdById     String
+  fileName        String?
+  fileHash        String? // SHA256 of original uploaded file
+  fileFormat      ImportFileFormat
+  columnMapping   Json? // { sourceCol → targetField } mapping snapshot
+  status          ImportBatchStatus
+  enrichmentDepth EnrichmentDepth
+  totalRows       Int               @default(0)
+  importedCount   Int               @default(0)
+  enrichedCount   Int               @default(0)
+  failedCount     Int               @default(0)
+  duplicateCount  Int               @default(0)
+  skippedCount    Int               @default(0)
+  summary         Json? // final stats
+  sourceAssetId   String? // 原始上传文件的 Asset ID
+  resultAssetId   String? // 导入结果导出文件的 Asset ID
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  tenant    Tenant            @relation(fields: [tenantId], references: [id])
+  createdBy User              @relation(fields: [createdById], references: [id])
+  items     ImportBatchItem[]
+
+  @@index([tenantId, status])
+  @@index([createdAt])
+}
+
+model ImportBatchItem {
+  id                String                @id @default(cuid())
+  batchId           String
+  rowIndex          Int // 原始行号
+  rawData           Json // 原始行数据
+  normalizedData    Json? // 标准化后的解析结果
+  normalizedName    String? // 标准化公司名
+  normalizedDomain  String? // 标准化域名
+  status            ImportBatchItemStatus
+  dedupeMatchType   String? // "domain" | "name+country"
+  dedupeMatchId     String? // 匹配到的现有 ProspectCompany ID
+  prospectCompanyId String? // 正式写入后关联的 ProspectCompany ID
+  error             String? // 失败原因
+  attempts          Int                   @default(0)
+  processedAt       DateTime?
+
+  batch ImportBatch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+
+  @@unique([batchId, rowIndex])
+  @@index([batchId, status])
+  @@index([normalizedDomain])
+  @@index([normalizedName])
 }
 
 // ==================== 正式机会（招标转化后）====================
@@ -1457,23 +1554,23 @@ model ApiKeyConfig {
 // ==================== 邮件附件模板 ====================
 
 model AttachmentTemplate {
-  id          String   @id @default(cuid())
-  tenantId    String
+  id       String @id @default(cuid())
+  tenantId String
 
   // 模板信息
-  name        String   // 显示名称
-  filename    String   // 实际文件名
-  contentType String   // MIME类型
-  storageKey  String   // OSS 存储路径
-  size        Int      // 文件大小(bytes)
+  name        String // 显示名称
+  filename    String // 实际文件名
+  contentType String // MIME类型
+  storageKey  String // OSS 存储路径
+  size        Int // 文件大小(bytes)
 
   // 分类
-  category    String   @default("other") // catalog, brochure, presentation, other
-  industry    String?  // 可选：特定行业
-  isDefault   Boolean  @default(false)   // 默认附件
+  category  String  @default("other") // catalog, brochure, presentation, other
+  industry  String? // 可选：特定行业
+  isDefault Boolean @default(false) // 默认附件
 
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([tenantId, isDefault])
   @@index([tenantId, category])
@@ -1481,7 +1578,6 @@ model AttachmentTemplate {
 }
 
 // ==================== 外联邮件记录 ====================
-
 
 model OutreachRecord {
   id       String @id @default(cuid())
@@ -1513,7 +1609,7 @@ model OutreachRecord {
   repliedAt   DateTime?
 
   // 通话结果 (phone channel)
-  callResult  String? // connected, no_answer, voicemail, meeting_booked, not_interested, callback
+  callResult String? // connected, no_answer, voicemail, meeting_booked, not_interested, callback
 
   // 错误信息
   error String?
@@ -1713,18 +1809,18 @@ model RadarDailySnapshot {
   tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   dayKey             String
-  rawCandidates      Int  @default(0)
-  qualifiedCompanies Int  @default(0)
-  importedProspects  Int  @default(0)
-  contactsAdded      Int  @default(0)
-  readyCompanies     Int  @default(0)
+  rawCandidates      Int    @default(0)
+  qualifiedCompanies Int    @default(0)
+  importedProspects  Int    @default(0)
+  contactsAdded      Int    @default(0)
+  readyCompanies     Int    @default(0)
 
-  workspaceTotal     Int  @default(0)
-  readyNowCount      Int  @default(0)
-  phonePriorityCount Int  @default(0)
-  emailPriorityCount Int  @default(0)
-  pendingCount       Int  @default(0)
-  avgReadyScore      Int  @default(0)
+  workspaceTotal     Int @default(0)
+  readyNowCount      Int @default(0)
+  phonePriorityCount Int @default(0)
+  emailPriorityCount Int @default(0)
+  pendingCount       Int @default(0)
+  avgReadyScore      Int @default(0)
 
   feedbackSummary Json?
 
