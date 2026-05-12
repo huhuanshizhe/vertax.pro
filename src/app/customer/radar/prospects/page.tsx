@@ -2255,6 +2255,14 @@ export default function RadarProspectsPage() {
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <button
+                            onClick={() => handleGenerateOutreach(selectedCompany)}
+                            disabled={isGenerating}
+                            className="px-3 py-2 rounded-xl bg-[var(--ci-signal)] text-white text-xs font-medium hover:bg-[#1d5fd6] transition-colors disabled:opacity-50 flex items-center gap-1.5"
+                          >
+                            {isGenerating ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                            {isGenerating ? '生成中...' : '生成外联方案'}
+                          </button>
+                          <button
                             onClick={handleSavePackDraft}
                             disabled={!outreachPack || isSavingPackDraft}
                             className="px-3 py-2 rounded-xl bg-[#0B1220] text-[var(--ci-accent)] text-xs font-medium disabled:opacity-50"

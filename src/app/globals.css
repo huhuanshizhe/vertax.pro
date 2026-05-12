@@ -808,6 +808,8 @@
   --ci-accent: #4f8df6;
   --ci-accent-strong: #1d4ed8;
   --ci-accent-soft: rgba(79, 141, 246, 0.12);
+  --ci-signal: #2563eb;
+  --ci-signal-soft: rgba(37, 99, 235, 0.08);
   --ci-success: #0f9f6e;
   --ci-warning: #d97706;
   --ci-danger: #dc2626;
