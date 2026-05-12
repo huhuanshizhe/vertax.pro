@@ -1,13 +1,7 @@
-import OpenAI from "openai";
+import { aiClient } from "@/lib/ai-client";
 import { getPlatformPrompt, getPlatformCharLimit, type PlatformId } from "@/lib/marketing/platform-rules";
 
 const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
-
-function getClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error("OPENAI_API_KEY is not configured");
-  return new OpenAI({ apiKey });
-}
 
 export type GenerateContentParams = {
   topic: string;
@@ -47,7 +41,6 @@ export async function generateSocialContent(
     return DEMO_CONTENT[params.platform] || DEMO_CONTENT.facebook;
   }
 
-  const client = getClient();
   const platformPrompt = getPlatformPrompt(params.platform as PlatformId);
   const toneInstruction = TONE_INSTRUCTIONS[params.tone] || TONE_INSTRUCTIONS.professional;
   const charLimit = getPlatformCharLimit(params.platform as PlatformId);
@@ -66,8 +59,8 @@ export async function generateSocialContent(
     .filter(Boolean)
     .join("\n");
 
-  const response = await client.chat.completions.create({
-    model: process.env.OPENAI_MODEL || "gpt-4o",
+  const response = await aiClient.chat.completions.create({
+    model: process.env.AI_MODEL || "qwen-plus",
     messages: [
       { role: "system", content: platformPrompt },
       { role: "user", content: userPrompt },
@@ -139,7 +132,7 @@ export async function generateAuditSummary(
     return DEMO_AUDIT_SUMMARY;
   }
 
-  const client = getClient();
+  const client = aiClient;
 
   const failedFindings = params.findings
     .filter((f) => f.status === "fail")
@@ -180,7 +173,7 @@ Use markdown formatting with ## headings. Keep it under 300 words.
 ${langInstruction}`;
 
   const response = await client.chat.completions.create({
-    model: process.env.OPENAI_MODEL || "gpt-4o",
+    model: process.env.AI_MODEL || "qwen-plus",
     messages: [
       {
         role: "system",
