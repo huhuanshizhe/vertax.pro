@@ -48,6 +48,11 @@ yarn-error.log*
 .env.*
 !.env.example
 
+# ----- Cookies / credentials -----
+cookie.txt
+cookie*.txt
+cookies.txt
+
 # ----- Vercel -----
 .vercel
 .vercel-tmp/

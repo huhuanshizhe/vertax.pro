@@ -27,6 +27,7 @@ import { DEFAULT_SCORING_PROFILE } from '@/types/scoring-profile';
 const MAX_RUN_SECONDS = 50;
 const MAX_BATCH_SIZE = 50;
 const AI_BATCH_SIZE = 10; // AI 每批处理的候选数量
+const TIER_C_SAMPLE_RATE = 0.3; // Tier C 30% 采样率进入 AI deep-qualify
 
 export async function GET(req: NextRequest) {
   const unauthorizedResponse = ensureCronAuthorized(req);
@@ -42,6 +43,8 @@ export async function GET(req: NextRequest) {
     stage1_processed: 0,
     stage1_excluded: 0,
     stage1_passed: 0,
+    // Budget control
+    budget_sampled_out: 0, // Tier C candidates skipped via sampling
     // Stage 2
     stage2_processed: 0,
     stage2_tierA: 0,
@@ -55,7 +58,7 @@ export async function GET(req: NextRequest) {
   };
 
   try {
-    // 查询 NEW 候选，按 profileId 分组
+    // 查询 NEW 候选，按 matchScore 降序（Tier A/B 优先处理），profileId 分组
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
     const candidates = await prisma.radarCandidate.findMany({
       where: {
@@ -65,7 +68,10 @@ export async function GET(req: NextRequest) {
       },
       include: { source: true },
       take: MAX_BATCH_SIZE,
-      orderBy: { createdAt: 'asc' },
+      orderBy: [
+        { matchScore: 'desc' }, // 高分（Tier A/B）优先
+        { createdAt: 'asc' },
+      ],
     });
 
     if (candidates.length === 0) {
@@ -131,8 +137,46 @@ export async function GET(req: NextRequest) {
 
         // ==================== Stage 2: AI 深度评估 ====================
         if (stage1Passed.length > 0 && Date.now() < deadline) {
+          // Budget control: Tier C 采样 — 只有部分 C 候选进入 AI 评估
+          const aiEligible: typeof candidates = [];
+          const sampledOut: typeof candidates = [];
+
+          for (const c of stage1Passed) {
+            const evidence = c.matchExplain as Record<string, unknown> | null;
+            const scoreBreakdown = evidence?.scoreBreakdown as Record<string, unknown> | undefined;
+            const preScoreTier = (scoreBreakdown?.tier as string) || c.qualifyTier;
+
+            if (preScoreTier === 'C') {
+              // Tier C: 采样率控制，未中选的直接标记为 QUALIFIED tier C
+              if (Math.random() < TIER_C_SAMPLE_RATE) {
+                aiEligible.push(c);
+              } else {
+                sampledOut.push(c);
+              }
+            } else {
+              // Tier A/B (or unknown pre-score): 全部进入 AI 评估
+              aiEligible.push(c);
+            }
+          }
+
+          // 标记被采样排除的 Tier C 候选（不消耗 AI token）
+          if (sampledOut.length > 0) {
+            await prisma.radarCandidate.updateMany({
+              where: { id: { in: sampledOut.map(c => c.id) } },
+              data: {
+                status: 'QUALIFIED',
+                qualifyTier: 'C',
+                qualifyReason: 'Fast-scored tier C — sampled out of AI deep-qualify',
+                qualifiedAt: new Date(),
+                qualifiedBy: 'budget-control',
+              },
+            });
+            stats.budget_sampled_out += sampledOut.length;
+            stats.stage2_tierC += sampledOut.length;
+          }
+
           // 将候选转换为 AI 评估格式
-          const aiCandidates: DeepQualifyCandidate[] = stage1Passed.map(c => ({
+          const aiCandidates: DeepQualifyCandidate[] = aiEligible.map(c => ({
             id: c.id,
             displayName: c.displayName,
             website: c.website,
@@ -183,6 +227,7 @@ export async function GET(req: NextRequest) {
 
     console.log(
       `[radar-qualify] Stage 1: ${stats.stage1_processed} processed (${stats.stage1_excluded} excluded, ${stats.stage1_passed} passed) | ` +
+      `Budget: ${stats.budget_sampled_out} tier-C sampled out | ` +
       `Stage 2: ${stats.stage2_processed} processed (A:${stats.stage2_tierA} B:${stats.stage2_tierB} C:${stats.stage2_tierC} excluded:${stats.stage2_excluded}) | ` +
       `Tokens: ${stats.stage2_tokensUsed}`
     );

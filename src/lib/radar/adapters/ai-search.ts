@@ -127,14 +127,14 @@ export class AISearchAdapter implements RadarAdapter {
     return {
       items: tenders,
       total: tenders.length,
-      hasMore: !allExhausted,
+      hasMore: false, // AI Search 在单次调用中完成所有查询，不支持分页
       metadata: {
         source: this.sourceCode,
         query,
         fetchedAt: new Date(),
         duration,
       },
-      // 持续扫描游标
+      // 持续扫描游标（供 scan-engine 使用）
       nextCursor: allExhausted ? undefined : { queryIndex: nextQueryIndex },
       isExhausted: allExhausted,
     };
@@ -144,7 +144,27 @@ export class AISearchAdapter implements RadarAdapter {
    * AI 生成多语言搜索查询
    */
   private async generateSearchQueries(query: RadarSearchQuery): Promise<GeneratedQuery[]> {
-    const systemPrompt = `你是招标搜索专家。根据用户的产品关键词和目标区域，生成用于在搜索引擎搜索招标公告的搜索查询。
+    // 根据 companyTypes 决定搜索模式
+    const isManufacturerSearch = query.companyTypes?.includes('manufacturer');
+
+    const systemPrompt = isManufacturerSearch
+      ? `你是企业搜索专家。根据用户的产品关键词和目标区域，生成用于在搜索引擎搜索制造商/工厂的搜索查询。
+
+输出要求：
+1. 生成 3-5 个不同角度的搜索查询
+2. 每个查询包含：语言代码、搜索词、目标区域
+3. 搜索目标是拥有特定制造工艺的工厂/制造商（不是设备供应商或材料供应商）
+4. 使用工厂相关词：manufacturer, factory, production line, facility, plant
+5. 考虑目标国家的官方语言和英文两种
+
+输出严格的 JSON 格式：
+{
+  "queries": [
+    { "lang": "en", "query": "automotive parts manufacturer Vietnam painting line factory", "region": "VN" },
+    { "lang": "vi", "query": "nhà máy sản xuất phụ tùng ô tô sơn phun", "region": "VN" }
+  ]
+}`
+      : `你是招标搜索专家。根据用户的产品关键词和目标区域，生成用于在搜索引擎搜索招标公告的搜索查询。
 
 输出要求：
 1. 生成 3-5 个不同角度的搜索查询
@@ -163,7 +183,7 @@ export class AISearchAdapter implements RadarAdapter {
 
     const userPrompt = `产品关键词：${query.keywords?.join(', ') || '(无)'}
 目标国家/地区：${query.countries?.join(', ') || query.regions?.join(', ') || '全球'}
-目标行业：${query.targetIndustries?.join(', ') || '通用'}`;
+目标行业：${query.targetIndustries?.join(', ') || '通用'}${query.excludeKeywords?.length ? `\n排除关键词（不要搜索这类公司）：${query.excludeKeywords.join(', ')}` : ''}`;
 
     try {
       const result = await chatCompletion(
@@ -177,15 +197,38 @@ export class AISearchAdapter implements RadarAdapter {
         }
       );
 
-      const parsed = JSON.parse(result.content);
-      return parsed.queries || [];
+      // Clean AI response: strip markdown code blocks and fix escaped quotes
+      let jsonStr = result.content.trim();
+      // Remove ```json ... ``` wrapper
+      jsonStr = jsonStr.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+
+      // Try parsing, and if it fails with escaped quotes, clean and retry
+      let parsed: { queries?: unknown[] };
+      try {
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        // Fix escaped quotes: \"value\" → "value"
+        const cleaned = jsonStr.replace(/\\"/g, '"');
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch {
+          // Last resort: extract JSON object from response
+          const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            parsed = JSON.parse(jsonMatch[0]);
+          } else {
+            throw new Error('Cannot parse AI response as JSON');
+          }
+        }
+      }
+      return (parsed.queries || []) as GeneratedQuery[];
     } catch (error) {
       console.error('Failed to generate search queries:', error);
-      // 降级：使用简单查询
+      // 降级：使用直接关键词作为搜索
       return [{
         lang: 'en',
-        query: `${query.keywords?.join(' ') || ''} tender procurement site:gov`,
-        region: 'global',
+        query: query.keywords?.join(' ') || '',
+        region: query.countries?.[0] || 'global',
       }];
     }
   }
@@ -309,7 +352,7 @@ export class AISearchAdapter implements RadarAdapter {
   }
 
   /**
-   * AI 解析搜索结果，提取招标信息
+   * AI 解析搜索结果，提取企业/招标信息
    */
   private async parseSearchResults(
     searchResults: Array<{ query: GeneratedQuery; items: WebSearchResult[] }>,
@@ -321,7 +364,31 @@ export class AISearchAdapter implements RadarAdapter {
       return [];
     }
 
-    const systemPrompt = `你是招标信息提取专家。分析搜索结果，识别其中的招标/采购公告，并提取关键信息。
+    const isManufacturerSearch = originalQuery.companyTypes?.includes('manufacturer');
+
+    const systemPrompt = isManufacturerSearch
+      ? `你是制造企业识别专家。分析搜索结果，识别其中的制造商/工厂，并提取关键信息。
+
+对于每个识别为制造商的结果，提取：
+- title: 企业名称
+- buyerName: 企业名称
+- buyerCountry: 企业所在国家（ISO code，如 VN, TH, ID）
+- sourceUrl: 企业官网或介绍链接
+- description: 企业简介（产品、工艺、规模）
+
+输出严格的 JSON 格式：
+{
+  "tenders": [
+    { "title": "...", "buyerName": "...", "buyerCountry": "...", "sourceUrl": "...", "description": "..." }
+  ],
+  "nonTenders": ["url1", "url2"]
+}
+
+注意：
+1. 只提取真实的制造商/工厂，排除新闻、供应商目录列表页、涂料/材料供应商
+2. 排除纯贸易公司、设备供应商
+3. sourceUrl 必须是原始搜索结果中的 link`
+      : `你是招标信息提取专家。分析搜索结果，识别其中的招标/采购公告，并提取关键信息。
 
 对于每个识别为招标的结果，提取：
 - title: 招标标题
@@ -366,8 +433,21 @@ ${JSON.stringify(allItems.slice(0, 15).map(item => ({
         }
       );
 
-      const parsed = JSON.parse(result.content);
-      const tenders = parsed.tenders || [];
+      let jsonStr2 = result.content.trim();
+      jsonStr2 = jsonStr2.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+      let parsed2: { tenders?: Record<string, unknown>[] };
+      try {
+        parsed2 = JSON.parse(jsonStr2);
+      } catch {
+        const cleaned2 = jsonStr2.replace(/\\"/g, '"');
+        try {
+          parsed2 = JSON.parse(cleaned2);
+        } catch {
+          const m = cleaned2.match(/\{[\s\S]*\}/);
+          parsed2 = m ? JSON.parse(m[0]) : { tenders: [] };
+        }
+      }
+      const tenders = parsed2.tenders || [];
       
       return tenders.map((t: Record<string, unknown>, idx: number) => this.normalizeAIResult(t, idx, originalQuery));
     } catch (error) {

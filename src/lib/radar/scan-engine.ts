@@ -1,5 +1,6 @@
 // ==================== Incremental Scan Engine ====================
 // 增量扫描引擎：游标驱动 + 时间预算 + 锁归属校验
+// 集成 DiscoveryQueryPlanner + FastICPScorer (Phase 1)
 
 import { prisma } from '@/lib/prisma';
 import { 
@@ -10,8 +11,19 @@ import {
 } from './adapters';
 import {
   buildTenantIndustryRadarHints,
-  mergeRadarKeywordHints,
+  selectTenantIndustrySourcePacks,
 } from './tenant-industry-source-pack';
+import {
+  planDiscoveryQueries,
+  FallbackLexiconProvider,
+} from './discovery-query-planner';
+import {
+  fastICPScore,
+  buildDiscoveryEvidence,
+  extractLocalExclusions,
+  type ScoringContext,
+  DEFAULT_SCORING_CONFIG,
+} from './fast-icp-scorer';
 
 // ==================== 类型定义 ====================
 
@@ -36,6 +48,7 @@ interface CursorState {
   nextPageToken?: string;
   since?: string;          // ISO8601
   queryIndex?: number;
+  planVersion?: string;    // Query plan hash for cursor stability
   exhausted?: boolean;
 }
 
@@ -114,7 +127,7 @@ export async function runIncrementalScan(
     // 3. 获取适配器
     const adapter = getAdapter(source.code, source.adapterConfig as Record<string, unknown>);
 
-    // 4. 构建基础查询
+    // 4. 构建查询计划（替代原有的 flat keyword iteration）
     const sourcePackHints = buildTenantIndustryRadarHints({
       tenantSlug: tenant?.slug,
       companyName: companyProfile?.companyName || tenant?.name,
@@ -126,53 +139,78 @@ export async function runIncrementalScan(
       painPoints: companyProfile?.painPoints,
       buyingTriggers: companyProfile?.buyingTriggers,
     });
-    const keywords = mergeRadarKeywordHints(
-      profile.keywords as Record<string, string[]>,
-      sourcePackHints
-    );
-    const allKeywords = [
-      ...(keywords.en || []),
-      ...(keywords.zh || []),
-      ...(keywords.es || []),
-      ...(keywords.ar || []),
-    ];
-    
-    // 注入排除词
-    const exclusionRules = (profile.exclusionRules as { negativeKeywords?: string[] }) || {};
-    const negativeKeywords = [
-      ...(profile.negativeKeywords as string[] || []),
-      ...(exclusionRules.negativeKeywords || []),
-      ...sourcePackHints.negativeKeywords,
-    ];
-    const targetIndustries = mergeUnique([
-      ...profile.industryCodes,
-      ...sourcePackHints.targetIndustries,
-    ]);
 
-    // 查询策略：按关键词+国家组合分批搜索
-    // 每次只用1个关键词+1个国家，避免查询过长
-    const queryIndex = cursor.queryIndex || 0;
-    const countryIndex = Math.floor(queryIndex / Math.max(allKeywords.length, 1));
-    const keywordIndex = queryIndex % Math.max(allKeywords.length, 1);
-    
-    const currentKeyword = allKeywords.length > 0 ? allKeywords[keywordIndex] : undefined;
-    const currentCountry = profile.targetCountries.length > 0 
-      ? profile.targetCountries[countryIndex % profile.targetCountries.length] 
-      : undefined;
-    
-    // 计算是否还有更多组合
+    // 使用 DiscoveryQueryPlanner 生成多语言查询计划
+    const lexiconProvider = new FallbackLexiconProvider();
+    const queryPlan = await planDiscoveryQueries({
+      tenantId: profile.tenantId,
+      tenantSlug: tenant?.slug,
+      packHints: sourcePackHints,
+      targetCountries: profile.targetCountries,
+      currentAdapterCode: source.code,
+      customKeywords: (profile.keywords as Record<string, string[]>)?.en,
+    }, lexiconProvider);
+
+    // Cursor stability: 如果 planVersion 变化，重置游标
+    if (cursor.planVersion && cursor.planVersion !== queryPlan.planVersion) {
+      cursor = { nextPage: 0, queryIndex: 0, planVersion: queryPlan.planVersion, exhausted: false };
+    }
+    cursor.planVersion = queryPlan.planVersion;
+
+    // Fallback: 如果 query planner 无输出，使用旧逻辑
+    const plannedQueries = queryPlan.queries;
+    if (plannedQueries.length === 0) {
+      const fallbackKeywords = [
+        ...((profile.keywords as Record<string, string[]>)?.en || []),
+      ];
+      for (const kw of fallbackKeywords.slice(0, 10)) {
+        plannedQueries.push({
+          text: kw,
+          language: 'en',
+          countryCode: profile.targetCountries[0] || '',
+          sourceCategory: 'web_serp_english',
+          intent: 'discovery',
+          priority: 20,
+          metadata: { termsUsed: [kw] },
+        });
+      }
+    }
+
+    // 构建 FastICPScorer 上下文
+    const packs = selectTenantIndustrySourcePacks({
+      tenantSlug: tenant?.slug,
+      companyName: companyProfile?.companyName || tenant?.name,
+      companyIntro: companyProfile?.companyIntro || tenant?.domain,
+      coreProducts: companyProfile?.coreProducts,
+      targetIndustries: companyProfile?.targetIndustries,
+      scenarios: companyProfile?.scenarios,
+      buyerPersonas: companyProfile?.buyerPersonas,
+      painPoints: companyProfile?.painPoints,
+      buyingTriggers: companyProfile?.buyingTriggers,
+    });
+    const activePack = packs[0];
+    const scoringConfig = activePack?.scoringConfig || DEFAULT_SCORING_CONFIG;
+    const scoringContext: ScoringContext = {
+      scoringConfig,
+      targetCountries: profile.targetCountries,
+      targetIndustries: mergeUnique([
+        ...profile.industryCodes,
+        ...sourcePackHints.targetIndustries,
+      ]),
+      targetRegions: profile.targetRegions,
+      triggerKeywords: sourcePackHints.buyingTriggers,
+    };
 
     const baseQuery: RadarSearchQuery = {
-      keywords: currentKeyword ? [currentKeyword] : undefined,
-      countries: currentCountry ? [currentCountry] : undefined,
+      countries: profile.targetCountries.length > 0 ? profile.targetCountries : undefined,
       regions: profile.targetRegions.length > 0 ? profile.targetRegions : undefined,
       categories: profile.categoryFilters.length > 0 ? profile.categoryFilters : undefined,
-      targetIndustries: targetIndustries.length > 0 ? targetIndustries : undefined,
       cursor: {
         nextPage: cursor.nextPage,
         nextPageToken: cursor.nextPageToken,
         since: cursor.since,
         queryIndex: cursor.queryIndex,
+        planVersion: cursor.planVersion,
       },
       maxResults: options.maxResults,
     };
@@ -190,7 +228,7 @@ export async function runIncrementalScan(
       },
     });
 
-    // 6. 预算循环
+    // 6. 预算循环（使用 PlannedQuery 驱动）
     let iterationCount = 0;
     const initialCursor = { ...cursor };
 
@@ -207,50 +245,73 @@ export async function runIncrementalScan(
         }
       }
 
-      // 重新计算当前关键词和国家
-      const queryIndex = cursor.queryIndex || 0;
-      const countryIndex = Math.floor(queryIndex / Math.max(allKeywords.length, 1));
-      const keywordIndex = queryIndex % Math.max(allKeywords.length, 1);
-      
-      const currentKeyword = allKeywords.length > 0 ? allKeywords[keywordIndex] : undefined;
-      const currentCountry = profile.targetCountries.length > 0 
-        ? profile.targetCountries[countryIndex % profile.targetCountries.length] 
-        : undefined;
-      
-      const totalCombinations = Math.max(allKeywords.length, 1) * Math.max(profile.targetCountries.length, 1);
-      const hasMoreCombinations = queryIndex < totalCombinations - 1;
+      // 从 PlannedQuery 列表中获取当前查询
+      const currentQueryIndex = cursor.queryIndex || 0;
+      if (currentQueryIndex >= plannedQueries.length) {
+        // 所有查询都搜索完了
+        cursor.exhausted = true;
+        cursor.since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+        cursor.queryIndex = 0;
+        stats.exhausted = true;
+        break;
+      }
 
-      // 执行搜索
+      const currentPlannedQuery = plannedQueries[currentQueryIndex];
+
+      // 获取该查询国家的本地排除词
+      const queryLexicon = await lexiconProvider.getCountryLexicon(
+        currentPlannedQuery.countryCode,
+        activePack?.id,
+        profile.tenantId
+      );
+      const localExclusions = extractLocalExclusions(queryLexicon, currentPlannedQuery.language);
+      scoringContext.localExclusions = localExclusions;
+
+      // 构建搜索查询（使用 rawQueryText，adapter 直接使用）
       const queryWithCursor: RadarSearchQuery = {
-        keywords: currentKeyword ? [currentKeyword] : undefined,
-        countries: currentCountry ? [currentCountry] : undefined,
-        regions: profile.targetRegions.length > 0 ? profile.targetRegions : undefined,
-        categories: profile.categoryFilters.length > 0 ? profile.categoryFilters : undefined,
-        targetIndustries: targetIndustries.length > 0 ? targetIndustries : undefined,
+        ...baseQuery,
+        rawQueryText: currentPlannedQuery.text,
+        plannedQueryMeta: {
+          language: currentPlannedQuery.language,
+          sourceCategory: currentPlannedQuery.sourceCategory,
+          intent: currentPlannedQuery.intent,
+          planVersion: queryPlan.planVersion,
+        },
+        countries: currentPlannedQuery.countryCode ? [currentPlannedQuery.countryCode] : baseQuery.countries,
         cursor: {
           nextPage: cursor.nextPage,
           nextPageToken: cursor.nextPageToken,
           since: cursor.since,
           queryIndex: cursor.queryIndex,
+          planVersion: cursor.planVersion,
         },
-        maxResults: options.maxResults,
       };
 
       const result = await adapter.search(queryWithCursor);
       stats.fetched += result.items.length;
 
-      // 批量处理候选
+      // 批量处理候选（使用 FastICPScorer 替代简单负面词过滤）
       for (const item of result.items) {
-        // 条款B: 过滤排除词
-        if (negativeKeywords.length > 0) {
-          const itemText = `${item.displayName} ${item.description || ''}`.toLowerCase();
-          if (negativeKeywords.some(kw => itemText.includes(kw.toLowerCase()))) {
-            continue;
-          }
-        }
+        const scoreResult = fastICPScore(item, scoringContext);
+
+        if (scoreResult.gate === 'HARD_REJECT') continue;
+
+        // 注入结构化证据
+        item.matchExplain = buildDiscoveryEvidence(
+          scoreResult, currentPlannedQuery, adapter.sourceCode, queryPlan.planVersion
+        ) as unknown as typeof item.matchExplain;
+        item.matchScore = scoreResult.score / 100;
 
         try {
-          await processCandidate(profile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy, stats);
+          await processCandidate(
+            profile.tenantId, sourceId, task.id, profileId, item,
+            source.ttlDays, source.storagePolicy, stats,
+            {
+              tier: scoreResult.tier,
+              shouldDeepQualify: scoreResult.shouldDeepQualify,
+              reason: scoreResult.reason,
+            }
+          );
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Unknown error';
           stats.errors.push(`Candidate error: ${errMsg}`);
@@ -263,25 +324,11 @@ export async function runIncrementalScan(
         stats.cursorAdvanced = true;
       }
 
-      // 当前关键词+国家组合搜索完成
+      // 当前 PlannedQuery 搜索完成
       if (result.isExhausted || !result.hasMore) {
-        // 移动到下一个组合
         cursor.queryIndex = (cursor.queryIndex || 0) + 1;
         cursor.nextPage = 0;
         cursor.nextPageToken = undefined;
-        stats.cursorAdvanced = true;
-        
-        // 检查是否还有更多组合
-        if (!hasMoreCombinations) {
-          // 所有组合都搜索完了
-          cursor.exhausted = true;
-          cursor.since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-          cursor.queryIndex = 0;
-          stats.exhausted = true;
-          break;
-        }
-        
-        // 继续下一个组合
         stats.cursorAdvanced = true;
       }
 
@@ -349,6 +396,12 @@ export async function runIncrementalScan(
 
 // ==================== 候选处理（upsert 去重） ====================
 
+interface CandidateScoringMeta {
+  tier: import('./fast-icp-scorer').ScoreTier;
+  shouldDeepQualify: boolean;
+  reason: string;
+}
+
 async function processCandidate(
   tenantId: string,
   sourceId: string,
@@ -357,7 +410,8 @@ async function processCandidate(
   item: NormalizedCandidate,
   ttlDays: number,
   storagePolicy: string,
-  stats: { created: number; duplicates: number; errors: string[] }
+  stats: { created: number; duplicates: number; errors: string[] },
+  scoringMeta: CandidateScoringMeta
 ): Promise<void> {
   const expireAt = ttlDays
     ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000)
@@ -370,6 +424,10 @@ async function processCandidate(
     const hash = Buffer.from(rawKey).toString('base64url').slice(0, 48);
     item = { ...item, externalId: 'fallback-' + hash };
   }
+
+  // Budget control: needs_review 候选直接进入 REVIEWING，不进入 AI qualify 队列
+  const initialStatus = scoringMeta.shouldDeepQualify ? 'NEW' : 'REVIEWING';
+  const initialQualifyTier = scoringMeta.tier === 'reject' ? undefined : scoringMeta.tier;
 
   const result = await prisma.radarCandidate.upsert({
     where: {
@@ -411,13 +469,19 @@ async function processCandidate(
 
       // 匹配信息
       matchExplain: item.matchExplain as object,
+      matchScore: item.matchScore,
       publishedAt: item.publishedAt,
 
       // TTL 策略
       rawData: storagePolicy !== 'ID_ONLY' ? (item.rawData as object) : undefined,
       expireAt,
 
-      status: 'NEW',
+      // Budget control: shouldDeepQualify 决定初始状态
+      status: initialStatus,
+      qualifyTier: initialQualifyTier,
+      qualifyReason: scoringMeta.shouldDeepQualify
+        ? undefined
+        : scoringMeta.reason || 'Fast-scored needs_review; awaiting evidence verification',
     },
     update: {
       // 仅更新时间戳，不覆盖已有数据

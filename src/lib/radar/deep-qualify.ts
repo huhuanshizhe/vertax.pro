@@ -18,6 +18,7 @@ import { chatCompletion } from '@/lib/ai-client';
 import { normalizeTargetRegions } from '@/lib/regions';
 import type { CompanyProfileContext } from '@/lib/skills/types';
 import { enrichCandidateIntelligence, calculateSignalScores, type IntelligenceData, type SignalScore } from './intelligence-enricher';
+import { selectTenantIndustrySourcePacks, type TenantIndustryProfileInput } from './tenant-industry-source-pack';
 
 // ==================== 类型定义 ====================
 
@@ -42,6 +43,8 @@ export interface DeepQualifyResult {
   id: string;
   tier: 'A' | 'B' | 'C' | 'excluded';
   confidence: number;
+  fitScore?: number;
+  evidenceConfidence?: number;
   matchReasons: string[];
   approachAngle: string;
   exclusionReason: string | null;
@@ -158,6 +161,7 @@ function _buildCandidatesList(candidates: DeepQualifyCandidate[]): string {
     if (c.country) parts.push(`   国家: ${c.country}${c.city ? ` / ${c.city}` : ''}`);
     if (c.companySize) parts.push(`   规模: ${c.companySize}`);
     if (c.sourceChannel) parts.push(`   来源: ${c.sourceChannel}`);
+    parts.push(...summarizeDiscoveryEvidence(c.matchExplain as Record<string, unknown> | null));
     return parts.join('\n');
   }).join('\n\n');
 }
@@ -166,6 +170,28 @@ function _buildCandidatesList(candidates: DeepQualifyCandidate[]): string {
  * 构建包含情报数据的候选列表
  * Phase 4: 扩展版本
  */
+function summarizeDiscoveryEvidence(value: Record<string, unknown> | null | undefined): string[] {
+  if (!value || value._v !== 2) return [];
+
+  const scoreBreakdown = value.scoreBreakdown as Record<string, unknown> | undefined;
+  const verificationActions = Array.isArray(value.verificationActions)
+    ? value.verificationActions.filter((item): item is string => typeof item === 'string')
+    : [];
+  const matchedObjectTerms = Array.isArray(value.matchedObjectTerms)
+    ? value.matchedObjectTerms.filter((item): item is string => typeof item === 'string')
+    : [];
+
+  return [
+    `   fastFitScore: ${typeof value.fitScore === 'number' ? value.fitScore : scoreBreakdown?.total ?? 'unknown'}`,
+    `   evidenceConfidence: ${typeof value.evidenceConfidence === 'number' ? value.evidenceConfidence : value.confidence ?? 'unknown'}`,
+    `   eligibilityGate: ${value.eligibilityGate || 'unknown'}`,
+    `   processSignalStrength: ${value.processSignalStrength || 'unknown'}`,
+    `   queryIntent: ${value.queryIntent || 'unknown'} / ${value.sourceCategory || 'unknown'} / ${value.queryLanguage || 'unknown'}`,
+    matchedObjectTerms.length ? `   paintedObjectSignals: ${matchedObjectTerms.join(', ')}` : '',
+    verificationActions.length ? `   verificationActions: ${verificationActions.join(', ')}` : '',
+  ].filter(Boolean);
+}
+
 function buildCandidatesListWithIntelligence(candidates: DeepQualifyCandidate[]): string {
   return candidates.map((c, i) => {
     const parts: string[] = [`${i + 1}. [ID: ${c.id}] ${c.displayName}`];
@@ -177,6 +203,7 @@ function buildCandidatesListWithIntelligence(candidates: DeepQualifyCandidate[])
     if (c.country) parts.push(`   国家: ${c.country}${c.city ? ` / ${c.city}` : ''}`);
     if (c.companySize) parts.push(`   规模: ${c.companySize}`);
     if (c.sourceChannel) parts.push(`   来源: ${c.sourceChannel}`);
+    parts.push(...summarizeDiscoveryEvidence(c.matchExplain as Record<string, unknown> | null));
 
     // Phase 4: 融资信号
     if (c.intelligence?.funding) {
@@ -289,6 +316,112 @@ const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任
   "batchSummary": { "total": 10, "tierA": 2, "tierB": 3, "tierC": 3, "excluded": 2 }
 }`;
 
+const MACHRIO_ICP_SYSTEM_PROMPT = `
+Machrio ICP rules when the tenant profile is about MRO industrial supplies, cross-border B2B procurement, industrial maintenance parts, or automation spare parts:
+
+1. Separate fit score from evidence confidence.
+   - fitScore is 0-100: procurement-need/industry/category/region/scale/trigger fit.
+   - evidenceConfidence is 0-1: how strong the proof is that this company actively procures MRO/industrial supplies.
+   - A general manufacturer website with no procurement signals may have moderate fitScore but low evidenceConfidence.
+
+2. Primary ICP: Cross-border or multi-site SMB industrial procurement teams buying MRO consumables, maintenance parts, safety supplies, or automation spare parts through a real B2B purchasing workflow (RFQ/PO/Net terms/DDP).
+
+3. Industry priority tiers:
+   - Tier 1 (highest weight): Manufacturing plants, warehouse/logistics/3PL, maintenance teams
+   - Tier 2 (strong fit): Automotive repair/fleet maintenance, light industrial workshops, construction contracting
+   - Tier 3 (moderate, non-core MRO only): Food & beverage facilities, healthcare facilities (only PPE/cleaning/packaging/warehouse supplies)
+
+4. Category priority (what they buy):
+   - Cash flow categories: oil seals/sealing, lockout/LOTO, PPE, fasteners, adhesives, bearings/belts
+   - Compliance/safety: LOTO devices, PPE kits, safety signage, EHS supplies
+   - Automation MRO: sensors (proximity/photoelectric/pressure/encoder), electrical parts, connectors, cable chains, industrial power, relay/PLC modules
+   - Robot/drone RFQ layer: gripper/end-effector/vacuum cups, drone batteries/propellers, inspection robot accessories
+
+5. Tier A criteria (immediate sales follow-up):
+   - Must show explicit MRO procurement need OR bulk industrial supplies purchasing evidence
+   - Must be in a target industry (manufacturing, warehouse, maintenance, automotive fleet, construction)
+   - Must show at least one buying-window trigger: supplier dissatisfaction, downtime/shortage, expansion, new project, compliance audit, automation upgrade
+   - Must have procurement decision-maker access: Procurement Manager, MRO Buyer, Maintenance Manager, Operations Director, or SMB owner
+   - Cross-border procurement complexity or multi-site operations is a strong bonus signal
+   - If fit is strong but evidenceConfidence < 0.7, downgrade to Tier B
+
+6. Key buying signals to look for:
+   - "Looking for alternative supplier" / "current supplier too expensive or slow"
+   - "Bulk order" / "volume pricing" / "RFQ" / "requesting quote"
+   - "New warehouse" / "facility expansion" / "new production line"
+   - "Equipment downtime" / "maintenance schedule" / "preventive maintenance"
+   - "Cross-border" / "import" / "DDP" / "landed cost" / "customs"
+   - "Net 30" / "purchase order" / "invoice required" / "company payment"
+
+7. Exclusion boundaries:
+   - Exclude: individual DIY buyers, pure retail/consumer hardware stores, home improvement
+   - Exclude: aviation MRO (different procurement ecosystem, regulated differently)
+   - Exclude: companies already deeply locked into Grainger/McMaster/Uline with no switching signals
+   - Exclude: companies needing same-day local service or on-site installation only
+   - Lower priority but do not exclude: very large enterprises (they may have specific cross-border needs)
+
+8. Buyer role priority:
+   - Primary: Procurement Manager, Purchasing Officer, Sourcing Specialist, MRO Buyer
+   - Influencer: Maintenance Engineer, Facility Manager, Warehouse Manager, EHS/Safety Manager
+   - Approver: Operations Director, Finance Director, SMB Owner
+
+Return strict JSON only. Each result must include:
+{
+  "id": "candidate id",
+  "tier": "A|B|C|excluded",
+  "confidence": 0.85,
+  "fitScore": 78,
+  "evidenceConfidence": 0.72,
+  "matchReasons": ["specific reasons"],
+  "approachAngle": "specific outreach angle for A/B",
+  "exclusionReason": null,
+  "dataGaps": ["missing evidence to verify"]
+}
+`;
+
+const ICP_V11_SYSTEM_PROMPT = `
+TDPaint ICP v1.1 rules when the tenant profile is about robotic spray painting, industrial paint automation, paint booth automation, or liquid paint finishing:
+
+1. Separate fit score from evidence confidence.
+   - fitScore is 0-100: customer/process/object/region/scale/trigger fit.
+   - evidenceConfidence is 0-1: how strong the proof is.
+   - A thin website with only inferred process evidence may have high fitScore but low evidenceConfidence.
+
+2. Do not treat inferred process evidence as Tier C by default.
+   - Inferred signals such as automotive exterior parts, appliance housings, motorcycle covers, or painted plastic parts mean "needs verification".
+   - Look for data gaps: in-house liquid paint line, paint shop, spray booth, wet painting, hiring, factory video, expansion news, compliance filing.
+
+3. Tier A is only for immediate sales follow-up.
+   - Requires explicit liquid spray painting / painting line / paint shop evidence.
+   - Requires high-relevance industry and painted object.
+   - Requires batch production or plant-scale evidence.
+   - Requires at least one buying-window trigger such as expansion, hiring, OEM/Tier 1 order, quality consistency issue, VOC/fire/ventilation/compliance pressure, or automation/lean initiative.
+   - Requires a reachable entry path or likely decision role.
+   - If fit is strong but evidenceConfidence is below 0.7, downgrade to Tier B and list verification dataGaps.
+
+4. Service-provider boundary.
+   - Exclude small repair painting, detailing, retail paint shops, and no-line coating shops.
+   - Keep but lower-prioritize medium/large industrial painting or finishing service providers if they show batch lines, scale, compliance pressure, or automation-upgrade needs.
+   - Prefer manufacturers with in-house paint shops.
+
+5. Painted object matters.
+   - Higher fit: visible exterior parts, high-consistency surfaces, repeatable batch parts, curved/irregular surfaces, large parts, and many-SKU small-batch parts.
+   - Lower fit: internal pipe coating, generic protective coating, floor/roof coating, or non-visible low-finish work.
+
+Return strict JSON only. Each result must include:
+{
+  "id": "candidate id",
+  "tier": "A|B|C|excluded",
+  "confidence": 0.85,
+  "fitScore": 78,
+  "evidenceConfidence": 0.72,
+  "matchReasons": ["specific reasons"],
+  "approachAngle": "specific outreach angle for A/B",
+  "exclusionReason": null,
+  "dataGaps": ["missing evidence to verify"]
+}
+`;
+
 // ==================== 核心评估函数 ====================
 
 /**
@@ -356,6 +489,9 @@ export async function deepQualifyBatch(
     ? buildCompanyContext(companyProfile)
     : '（未配置企业画像。请基于候选公司自身信息和通用B2B逻辑进行判断。）';
 
+  // 根据租户画像选择对应的 ICP 评估规则
+  const tenantIcpPrompt = selectTenantIcpPrompt(companyProfile, tenantId);
+
   // 构建候选列表（包含情报数据）
   const candidatesList = buildCandidatesListWithIntelligence(candidates);
 
@@ -371,7 +507,7 @@ ${candidatesList}
   try {
     const aiResponse = await chatCompletion(
       [
-        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'system', content: `${SYSTEM_PROMPT}\n\n${tenantIcpPrompt}` },
         { role: 'user', content: userPrompt },
       ],
       {
@@ -423,6 +559,17 @@ ${candidatesList}
         // Phase 4: 考虑信号评分进行 Tier 调整
         let finalTier = (['A', 'B', 'C', 'excluded'].includes(aiResult.tier) ? aiResult.tier : 'C') as 'A' | 'B' | 'C' | 'excluded';
         let signalBoost = 0;
+        const fitScore = typeof aiResult.fitScore === 'number'
+          ? Math.max(0, Math.min(100, aiResult.fitScore))
+          : undefined;
+        const evidenceConfidence = typeof aiResult.evidenceConfidence === 'number'
+          ? Math.max(0, Math.min(1, aiResult.evidenceConfidence))
+          : undefined;
+
+        if (finalTier === 'A' && evidenceConfidence !== undefined && evidenceConfidence < 0.7) {
+          finalTier = 'B';
+          signalBoost = Math.min(signalBoost, -0.05);
+        }
 
         if (c.signalScores && finalTier !== 'excluded') {
           const { fundingSignal, newsSignal, overallScore } = c.signalScores;
@@ -456,6 +603,8 @@ ${candidatesList}
           id: c.id,
           tier: finalTier,
           confidence: typeof aiResult.confidence === 'number' ? Math.min(1, Math.max(0, aiResult.confidence + signalBoost)) : 0.5,
+          fitScore,
+          evidenceConfidence,
           matchReasons: Array.isArray(aiResult.matchReasons) ? aiResult.matchReasons : [],
           approachAngle: typeof aiResult.approachAngle === 'string' ? aiResult.approachAngle : '',
           exclusionReason: aiResult.exclusionReason ?? null,
@@ -531,6 +680,8 @@ export async function applyDeepQualifyResults(
             aiRelevance: {
               tier: result.tier,
               confidence: result.confidence,
+              fitScore: result.fitScore,
+              evidenceConfidence: result.evidenceConfidence,
               matchReasons: result.matchReasons,
               approachAngle: result.approachAngle,
               source: 'deep-qualify-v2',
@@ -551,22 +702,32 @@ export async function applyDeepQualifyResults(
         });
 
         const needsEnrich = candidate && !candidate.website && !candidate.phone && !candidate.email;
-        const finalStatus = (needsEnrich && (result.tier === 'A' || result.tier === 'B'))
-          ? 'ENRICHING'
-          : 'QUALIFIED';
+        const needsEvidenceVerification =
+          typeof result.evidenceConfidence === 'number' && result.evidenceConfidence < 0.55;
+        const finalStatus = needsEvidenceVerification
+          ? 'REVIEWING'
+          : (needsEnrich && (result.tier === 'A' || result.tier === 'B'))
+            ? 'ENRICHING'
+            : 'QUALIFIED';
 
         await prisma.radarCandidate.update({
           where: { id: result.id },
           data: {
             status: finalStatus,
             qualifyTier: result.tier,
-            qualifyReason: result.matchReasons.join('; '),
-            matchScore: result.confidence,
+            qualifyReason: [
+              needsEvidenceVerification ? 'Needs evidence verification' : '',
+              result.matchReasons.join('; '),
+            ].filter(Boolean).join(': '),
+            matchScore: typeof result.fitScore === 'number' ? result.fitScore / 100 : result.confidence,
             aiSummary: result.approachAngle || null,
             // Phase 4: 保存信号评分到 aiRelevance
             aiRelevance: {
               tier: result.tier,
               confidence: result.confidence,
+              fitScore: result.fitScore,
+              evidenceConfidence: result.evidenceConfidence,
+              verificationStatus: needsEvidenceVerification ? 'needs_verification' : 'qualified',
               matchReasons: result.matchReasons,
               approachAngle: result.approachAngle,
               dataGaps: result.dataGaps,
@@ -636,5 +797,44 @@ async function appendExclusionFeedback(
     });
   } catch {
     // Silent failure — does not affect main flow
+  }
+}
+
+// ==================== Tenant ICP Prompt Selection ====================
+
+/**
+ * 根据租户画像选择对应的 ICP 深度评估 Prompt
+ * 使用 source pack 匹配逻辑判断租户类型
+ */
+function selectTenantIcpPrompt(
+  profile: CompanyProfileContext | null,
+  tenantId: string
+): string {
+  if (!profile) {
+    return ICP_V11_SYSTEM_PROMPT; // 默认 fallback
+  }
+
+  const input: TenantIndustryProfileInput = {
+    tenantSlug: tenantId,
+    companyName: profile.companyName,
+    companyIntro: profile.companyIntro,
+    coreProducts: profile.coreProducts,
+    targetIndustries: profile.targetIndustries,
+    scenarios: profile.scenarios,
+    buyerPersonas: profile.buyerPersonas,
+    painPoints: profile.painPoints,
+    buyingTriggers: profile.buyingTriggers,
+  };
+
+  const packs = selectTenantIndustrySourcePacks(input);
+  const primaryPackId = packs[0]?.id;
+
+  switch (primaryPackId) {
+    case 'mro_industrial_supplies':
+      return MACHRIO_ICP_SYSTEM_PROMPT;
+    case 'painting_automation':
+      return ICP_V11_SYSTEM_PROMPT;
+    default:
+      return ICP_V11_SYSTEM_PROMPT;
   }
 }

@@ -118,7 +118,7 @@ export class ExaAdapter implements RadarAdapter {
 
     const locationIso = normalizeCountryCode(query.countries?.[0]);
     const locationName = getCountryDisplayName(locationIso);
-    const searchQuery = [query.keywords?.join(' ') || '', locationName]
+    const searchQuery = [query.rawQueryText || query.keywords?.join(' ') || '', locationName]
       .filter(Boolean)
       .join(' ')
       .trim();
@@ -142,13 +142,19 @@ export class ExaAdapter implements RadarAdapter {
       query: searchQuery,
       type: 'neural', // 使用神经搜索
       useAutoprompt: true, // 自动优化查询
-      numResults: Math.min(query.pageSize || 10, 100),
+      category: 'company', // 默认搜索企业网站
+      numResults: Math.min(query.pageSize || query.maxResults || 10, 100),
       contents: {
         text: true,
         highlights: { numSentences: 3 },
         summary: true,
       },
     };
+
+    // 排除域名（涂料供应商等）
+    if (query.excludeDomains?.length) {
+      requestBody.excludeDomains = query.excludeDomains;
+    }
 
     if (locationIso) {
       requestBody.userLocation = locationIso;

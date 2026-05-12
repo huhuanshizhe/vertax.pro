@@ -883,6 +883,7 @@ enum ChannelType {
   TRADESHOW // 展会
   HIRING // 招聘信号
   ECOSYSTEM // 生态伙伴
+  SOCIAL // 社交平台 (Facebook, LinkedIn SERP)
   CUSTOM // 自定义
 }
 
@@ -1100,6 +1101,7 @@ model RadarCandidate {
   // 联系人字段（candidateType=CONTACT）
   contactRole       String?
   linkedInUrl       String? // 公司 LinkedIn 页（Exa 丰富化写入）
+  facebookUrl       String? // 公司 Facebook 页（Social SERP 写入）
   linkedCandidateId String? // 关联到哪个公司候选
 
   // ICP 匹配（核心）
@@ -1917,4 +1919,33 @@ model Inquiry {
   @@index([status])
   @@index([createdAt])
   @@map("inquiries")
+}
+
+// ==================== 国家语言词库 (Radar 多语言发现) ====================
+
+model CountryLanguageLexicon {
+  id          String  @id @default(cuid())
+  tenantId    String? // null = 平台级共享词库
+  countryCode String // ISO 3166 alpha-2 (VN, TH, ID, SA...)
+  language    String // ISO 639-1 (vi, th, id, ar, ms...)
+  packId      String? // 行业包 ID (painting_automation, mro_supplies, etc.)
+
+  // 术语
+  manufacturerTerms String[] // ['nhà sản xuất', 'công ty', ...]
+  industryTerms     String[] // ['linh kiện ô tô', ...]
+  processTerms      String[] // ['sơn phun', 'xưởng sơn', ...]
+  productTerms      String[] // ['vỏ nhựa', ...]
+  exclusionTerms    String[] // ['sửa chữa ô tô', ...]
+
+  // 元数据
+  source   String  @default("manual") // manual | ai_generated | imported
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([countryCode, language, packId, tenantId])
+  @@index([countryCode, packId])
+  @@index([tenantId])
+  @@map("country_language_lexicons")
 }

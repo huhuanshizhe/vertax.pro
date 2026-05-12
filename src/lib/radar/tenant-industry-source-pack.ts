@@ -12,6 +12,37 @@ export interface TenantIndustryProfileInput {
   buyingTriggers?: unknown;
 }
 
+export interface PackScoringConfig {
+  weights: {
+    process: number;
+    industry: number;
+    object?: number;
+    region: number;
+    scale: number;
+    pain: number;
+  };
+  thresholds: {
+    a: number;
+    b: number;
+    c: number;
+  };
+  strongSignals: string[];
+  mediumSignals: string[];
+  weakSignals: string[];
+  objectSignals?: {
+    highValue: string[];
+    standard: string[];
+    lowFit: string[];
+  };
+  hardExclusions: string[];
+  verificationTemplates?: {
+    processInferred: string[];
+    objectMissing: string[];
+    triggerMissing: string[];
+    lowConfidence: string[];
+  };
+}
+
 export interface TenantIndustrySourcePack {
   id: 'painting_automation' | 'mro_industrial_supplies';
   label: string;
@@ -24,6 +55,9 @@ export interface TenantIndustrySourcePack {
   buyerRoles: string[];
   sourceSignals: string[];
   negativeKeywords: string[];
+  verificationQueries?: string[];
+  scoringConfig?: PackScoringConfig;
+  targetCountries?: string[];
 }
 
 export interface TenantIndustryRadarHints {
@@ -34,6 +68,7 @@ export interface TenantIndustryRadarHints {
   buyingTriggers: string[];
   sourceSignals: string[];
   negativeKeywords: string[];
+  verificationQueries: string[];
   productModels: ProductModel[];
 }
 
@@ -79,6 +114,10 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'sames',
     ],
     discoveryKeywords: [
+      'automotive parts manufacturer Vietnam painting line factory',
+      'motorcycle parts manufacturer Thailand spray painting facility',
+      'appliance housing manufacturer Indonesia paint shop',
+      'electronics enclosure manufacturer Malaysia painted parts',
       'robotic painting system',
       'spray painting automation',
       'industrial paint automation',
@@ -120,6 +159,19 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'paint atomization quality issue',
       'paint shop throughput improvement',
       'paint shop commissioning',
+      'new paint line capacity expansion',
+      'new factory painting line',
+      'painting supervisor recruitment',
+      'spray painter hiring',
+      'process engineer painting line',
+      'OEM approval paint quality',
+      'Tier 1 supplier certification',
+      'paint rework rate',
+      'color difference issue',
+      'ventilation compliance',
+      'fire safety compliance',
+      'explosion proof spray booth',
+      'lean manufacturing automation',
     ],
     competitorKeywords: [
       'ABB painting robot customer',
@@ -163,6 +215,11 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'hiring pages',
       'safety compliance pages',
       'project references',
+      'industrial park directories',
+      'association directories',
+      'factory videos',
+      'environmental impact assessment filings',
+      'expansion news',
     ],
     negativeKeywords: [
       'body shop repair',
@@ -189,22 +246,89 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'artist paint',
       'paint store',
     ],
+    verificationQueries: [
+      'painting supervisor recruitment manufacturer',
+      'spray painter hiring automotive parts factory',
+      'process engineer painting line manufacturer',
+      'factory expansion painting line',
+      'new plant paint shop automotive parts',
+      'environmental impact assessment painting line factory',
+      'VOC compliance paint shop factory',
+      'fire safety spray booth factory',
+      'site:youtube.com factory painting line',
+      'industrial park automotive parts painting line',
+      'OEM approval painted parts supplier',
+      'Tier 1 supplier paint shop',
+    ],
+    scoringConfig: {
+      weights: { process: 30, industry: 20, object: 15, region: 10, scale: 10, pain: 15 },
+      thresholds: { a: 75, b: 55, c: 40 },
+      strongSignals: [
+        'paint shop', 'spray painting', 'painting line', 'spray booth',
+        'robotic painting', 'automated painting line', 'painted plastic parts',
+        'automotive exterior painting', 'appliance housing painting',
+        'paint booth automation', 'paint robot', 'liquid paint line',
+        'wet painting line', 'in-house paint shop', 'painting facility',
+        'spray painting facility',
+      ],
+      mediumSignals: [
+        'surface finishing', 'painted parts', 'decorative finish',
+        'in-house finishing', 'metal enclosure finishing',
+        'liquid coating', 'painted components',
+      ],
+      weakSignals: [
+        'automotive exterior parts', 'motorcycle body parts',
+        'home appliance casing', 'plastic molded parts', 'metal cabinets',
+        'bumper manufacturer', 'fairing manufacturer', 'painted housing',
+      ],
+      objectSignals: {
+        highValue: [
+          'automotive bumper', 'car bumper', 'motorcycle fairing',
+          'motorcycle cover', 'appliance housing', 'electronics enclosure',
+          'visible exterior part', 'painted plastic exterior',
+          'curved surface part', 'class a surface', 'high gloss surface',
+        ],
+        standard: [
+          'metal enclosure', 'plastic housing', 'cabinet', 'cover panel',
+          'machine cover', 'tractor body panel', 'construction machinery panel',
+          'wood panel', 'furniture panel', 'batch painted parts',
+        ],
+        lowFit: [
+          'pipe internal coating', 'tank lining', 'floor coating',
+          'roof coating', 'protective coating only',
+        ],
+      },
+      hardExclusions: [
+        'repair body shop', 'car detailing', 'car repainting service',
+        'small coating shop', 'paint retailer', 'equipment reseller only',
+        'paint distributor', 'coating materials supplier',
+        'electroplating', 'anodizing', 'pvd coating', 'thermal spray',
+        'e-coat only', 'powder coating only', 'adhesive dispensing',
+        'glue dispensing', 'battery slurry coating', 'film coating',
+        'medical coating',
+      ],
+    },
+    targetCountries: ['VN', 'TH', 'ID', 'MY', 'PH', 'MX', 'TR', 'IN', 'SA', 'AE'],
   },
   {
     id: 'mro_industrial_supplies',
-    label: 'MRO industrial supplies and RFQ procurement',
+    label: 'Cross-border MRO industrial supplies with B2B procurement workflow (RFQ/PO/DDP)',
     productModel: 'procurement',
     matchTerms: [
+      // Brand
       'machrio',
       'mach rio',
+      // Core MRO identity
       'mro',
       'maintenance repair operations',
       'industrial essentials',
       'industrial supplies',
       'tools parts',
+      // Traditional MRO categories
       'fasteners',
       'abrasives',
       'adhesives',
+      'sealants',
       'safety ppe',
       'ppe',
       'material handling',
@@ -212,11 +336,58 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'hydraulics',
       'electrical supplies',
       'hardware',
+      'bearings',
+      'belts',
+      'o-ring',
+      // High-traffic categories: oil seals, lockout, PPE
+      'oil seal',
+      'seal kit',
+      'mechanical seal',
+      'lockout',
+      'loto',
+      'tagout',
+      'lockout tagout',
+      'safety padlock',
+      // Sensors & automation MRO
+      'proximity sensor',
+      'photoelectric sensor',
+      'pressure sensor',
+      'temperature sensor',
+      'encoder',
+      'industrial sensor',
+      'vibration sensor',
+      'level sensor',
+      'gas detector',
+      // Robotics & automation spare parts
+      'robot gripper',
+      'vacuum cup',
+      'cable chain',
+      'drag chain',
+      'industrial connector',
+      'servo motor',
+      'reducer',
+      'plc module',
+      'relay',
+      'terminal block',
+      'din rail',
+      'industrial power supply',
+      // Drone & inspection robot parts
+      'drone battery',
+      'drone propeller',
+      'drone motor',
+      'gimbal camera',
+      // B2B procurement workflow signals
       'rfq',
       'volume pricing',
       'net 30',
+      'purchase order',
+      'bulk order',
+      'ddp shipping',
+      'landed cost',
+      'cross-border procurement',
     ],
     discoveryKeywords: [
+      // Core MRO discovery
       'MRO industrial supplies buyer',
       'maintenance repair operations procurement',
       'industrial supplies RFQ',
@@ -231,18 +402,86 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'facility maintenance supplies',
       'warehouse operations supplies',
       'industrial consumables buyer',
+      // Oil seal & sealing
+      'oil seal industrial buyer',
+      'mechanical seal supplier bulk',
+      'o-ring seal kit procurement',
+      'seal replacement parts manufacturer',
+      // Lockout / LOTO
+      'lockout tagout supplier',
+      'LOTO safety devices procurement',
+      'safety lockout kit industrial',
+      'lockout station supplier bulk',
+      // Sensors & automation MRO
+      'industrial sensor replacement buyer',
+      'proximity sensor supplier bulk order',
+      'photoelectric sensor procurement',
+      'encoder replacement parts',
+      'pressure transmitter supplier',
+      'temperature sensor industrial bulk',
+      'vibration monitoring sensor supplier',
+      // Robotics & automation spare parts
+      'robot maintenance spare parts',
+      'robot gripper vacuum cup supplier',
+      'cable chain drag chain bulk',
+      'industrial connector supplier',
+      'PLC relay terminal block procurement',
+      'servo motor reducer supplier',
+      // Warehouse & logistics
+      'warehouse packing materials bulk',
+      'pallet jack hand truck supplier',
+      'warehouse shelving racking supplier',
+      'pick cart order fulfillment supplies',
+      'high bay LED lighting industrial',
+      // Cross-border MRO
+      'cross-border industrial supplies procurement',
+      'DDP MRO supplies shipping',
+      'international factory supplies buyer',
+      'import industrial parts customs clearance',
     ],
     triggerKeywords: [
+      // Supplier friction
       'supplier consolidation',
       'volume pricing request',
       'bulk order industrial supplies',
       'replacement parts shortage',
-      'maintenance downtime reduction',
-      'new warehouse opening',
-      'facility maintenance contract',
+      'current supplier lead time too long',
+      'supplier cost too high',
+      'reduce number of suppliers',
       'procurement cost reduction',
       'MRO vendor onboarding',
       'RFQ industrial supplies',
+      // Operational triggers
+      'maintenance downtime reduction',
+      'production line downtime',
+      'equipment breakdown',
+      'emergency spare parts',
+      'preventive maintenance schedule',
+      // Expansion triggers
+      'new warehouse opening',
+      'new factory construction',
+      'new production line',
+      'facility expansion',
+      'warehouse expansion',
+      'new project startup',
+      // Automation & upgrade triggers
+      'automation upgrade',
+      'equipment upgrade',
+      'sensor replacement program',
+      'robot maintenance contract',
+      'conveyor system maintenance',
+      // Compliance triggers
+      'OSHA compliance',
+      'safety audit',
+      'EHS compliance upgrade',
+      'lockout tagout program',
+      'PPE compliance review',
+      // Cross-border triggers
+      'cross-border procurement complexity',
+      'customs clearance difficulty',
+      'looking for DDP supplier',
+      'need purchase order payment terms',
+      'facility maintenance contract',
     ],
     competitorKeywords: [
       'Grainger alternative supplier',
@@ -252,26 +491,53 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'Motion Industries MRO customer',
       'Zoro industrial supplies customer',
       'MROSupply customer',
+      'RS Components alternative',
+      'Misumi alternative supplier',
+      'MonotaRO customer',
+      'Amazon Business industrial buyer',
+      'Uline alternative supplier',
+      'Global Industrial customer',
     ],
     targetIndustries: [
+      // Tier 1: Highest priority
       'manufacturing',
-      'construction',
-      'automotive',
-      'healthcare facilities',
-      'food and beverage manufacturing',
+      'discrete manufacturing',
+      'process manufacturing',
       'warehouse and logistics',
-      'facility management',
+      '3PL fulfillment',
       'plant maintenance',
+      // Tier 2: Strong fit
+      'automotive repair and fleet maintenance',
+      'automotive aftermarket',
+      'light industrial workshop',
+      'construction contracting',
+      'general contracting',
+      'facility management',
+      // Tier 3: Adjacent (non-core MRO only)
+      'food and beverage manufacturing',
+      'healthcare facilities',
+      'pharmaceutical manufacturing',
+      // Automation-adjacent
+      'industrial automation',
+      'robotics maintenance',
+      'factory automation',
     ],
     buyerRoles: [
       'Procurement Manager',
+      'Purchasing Officer',
+      'Sourcing Specialist',
       'MRO Buyer',
       'Maintenance Manager',
+      'Maintenance Engineer',
       'Facility Manager',
       'Operations Manager',
       'Warehouse Manager',
       'Plant Manager',
       'Supply Chain Manager',
+      'EHS Manager',
+      'Safety Manager',
+      'Automation Engineer',
+      'Operations Director',
     ],
     sourceSignals: [
       'industrial catalogs',
@@ -281,6 +547,12 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'facility management directories',
       'warehouse directories',
       'maintenance service pages',
+      'industrial park directories',
+      'MRO procurement RFP postings',
+      'safety compliance audit pages',
+      'factory expansion announcements',
+      'equipment maintenance blogs',
+      'industrial trade show attendees',
     ],
     negativeKeywords: [
       'aviation MRO',
@@ -288,7 +560,120 @@ const TENANT_INDUSTRY_SOURCE_PACKS: TenantIndustrySourcePack[] = [
       'consumer hardware',
       'home improvement retail',
       'used machinery marketplace',
+      'individual DIY',
+      'hobbyist tools',
+      'home garden tools',
+      'arts and crafts supplies',
+      'personal protective cosmetics',
+      'residential plumbing',
+      'home electrical repair',
     ],
+    verificationQueries: [
+      'verify company has industrial operations or manufacturing facility',
+      'check company procurement team or purchasing department',
+      'check for repeat MRO buying patterns or vendor relationships',
+      'verify multi-site operations or cross-border logistics needs',
+      'check maintenance team or facility management signals',
+      'verify company size supports bulk purchasing volume',
+      'check for automation or equipment upgrade signals',
+      'verify B2B procurement workflow (PO/invoice/net terms)',
+    ],
+    scoringConfig: {
+      weights: { process: 30, industry: 25, object: 10, region: 15, scale: 10, pain: 10 },
+      thresholds: { a: 75, b: 55, c: 40 },
+      strongSignals: [
+        // Core MRO procurement signals
+        'mro', 'maintenance repair operations', 'industrial supplies procurement',
+        'factory maintenance', 'plant spare parts', 'industrial mro buyer',
+        'mro procurement', 'maintenance supplies',
+        // High-traffic categories
+        'oil seal', 'lockout tagout', 'loto program', 'safety lockout',
+        'industrial ppe', 'bulk ppe',
+        // Sensors & automation MRO
+        'industrial sensor', 'proximity sensor', 'photoelectric sensor',
+        'encoder replacement', 'pressure transmitter',
+        // Robot/automation maintenance
+        'robot spare parts', 'automation spare parts', 'conveyor maintenance',
+        // B2B workflow
+        'purchase order', 'bulk procurement', 'rfq',
+      ],
+      mediumSignals: [
+        'procurement manager', 'facility maintenance', 'warehouse operations',
+        'maintenance engineer', 'plant operations', 'industrial buyer',
+        'bulk order', 'volume pricing', 'net terms',
+        'seal replacement', 'bearing replacement', 'fastener supply',
+        'safety supplies', 'warehouse supplies', 'packing materials',
+        'industrial connector', 'cable chain', 'plc module',
+      ],
+      weakSignals: [
+        'industrial consumables', 'hardware supplies',
+        'factory operations', 'manufacturing plant',
+        'warehouse facility', 'distribution center',
+        'fleet maintenance', 'vehicle maintenance',
+        'construction site', 'building maintenance',
+      ],
+      objectSignals: {
+        highValue: [
+          // Oil seals & sealing (high-traffic, high-intent)
+          'oil seal', 'mechanical seal', 'seal kit', 'o-ring',
+          'shaft seal', 'hydraulic seal',
+          // Lockout/LOTO (compliance-driven, sticky)
+          'lockout tagout', 'loto', 'safety padlock', 'lockout station',
+          'lockout hasp', 'valve lockout',
+          // Sensors (automation MRO, high-margin)
+          'proximity sensor', 'photoelectric sensor', 'encoder',
+          'pressure sensor', 'temperature sensor', 'vibration sensor',
+          // Robot/automation parts
+          'robot gripper', 'vacuum cup', 'end effector',
+        ],
+        standard: [
+          // General MRO staples
+          'bearing', 'belt', 'fastener', 'bolt', 'nut',
+          'abrasive', 'adhesive', 'tape',
+          'glove', 'safety glass', 'hard hat', 'ear plug',
+          'cable chain', 'connector', 'terminal',
+          'relay', 'contactor', 'circuit breaker',
+          'packing material', 'stretch wrap', 'pallet',
+          'hand truck', 'shelving', 'bin',
+          'led high bay', 'industrial lighting',
+        ],
+        lowFit: [
+          // Low fit for Machrio
+          'consumer electronics', 'home appliance',
+          'personal care product', 'food ingredient',
+          'pharmaceutical raw material', 'medical implant',
+          'aircraft engine part', 'military grade component',
+        ],
+      },
+      hardExclusions: [
+        'consumer retail', 'home improvement', 'used machinery marketplace',
+        'non-industrial', 'aviation MRO', 'aircraft maintenance',
+        'individual DIY buyer', 'hobbyist', 'arts crafts',
+        'residential contractor only', 'home gardening',
+        'military defense only', 'nuclear facility',
+      ],
+      verificationTemplates: {
+        processInferred: [
+          'verify_company_has_industrial_operations_or_facility',
+          'check_procurement_team_or_purchasing_department',
+          'check_for_mro_buying_patterns_or_vendor_relationships',
+        ],
+        objectMissing: [
+          'verify_product_categories_purchased',
+          'check_maintenance_or_operations_needs',
+        ],
+        triggerMissing: [
+          'check_expansion_or_new_facility_signals',
+          'check_supplier_dissatisfaction_or_switching_signals',
+          'check_equipment_downtime_or_maintenance_needs',
+        ],
+        lowConfidence: [
+          'collect_procurement_workflow_evidence',
+          'verify_bulk_buying_or_repeat_purchase_patterns',
+        ],
+      },
+    },
+    targetCountries: ['US', 'MX', 'CA', 'BR', 'CO', 'CL', 'PE', 'AE', 'SA', 'AU', 'GB', 'VN', 'TH', 'ID', 'MY', 'PH'],
   },
 ];
 
@@ -388,6 +773,7 @@ export function buildTenantIndustryRadarHints(
     buyingTriggers: dedupe(packs.flatMap((pack) => pack.triggerKeywords)),
     sourceSignals: dedupe(packs.flatMap((pack) => pack.sourceSignals)),
     negativeKeywords: dedupe(packs.flatMap((pack) => pack.negativeKeywords)),
+    verificationQueries: dedupe(packs.flatMap((pack) => pack.verificationQueries || [])),
     productModels: dedupe(packs.map((pack) => pack.productModel)) as ProductModel[],
   };
 }

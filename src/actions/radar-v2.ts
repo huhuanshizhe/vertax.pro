@@ -245,7 +245,7 @@ export async function initializeSystemSourcesV2() {
       const source = await prisma.radarSource.create({
         data: {
           tenantId: null, // 缁崵绮虹痪?
-          channelType: reg.channelType,
+          channelType: reg.channelType as string as import('@prisma/client').$Enums.ChannelType,
           name: reg.name,
           code: reg.code,
           description: reg.description,
@@ -292,7 +292,7 @@ async function getOrCreateAutoDiscoverySource(): Promise<RadarSource> {
     return prisma.radarSource.create({
       data: {
         tenantId: null,
-        channelType: registration.channelType,
+        channelType: registration.channelType as string as import('@prisma/client').$Enums.ChannelType,
         name: registration.name,
         code: registration.code,
         description: registration.description,

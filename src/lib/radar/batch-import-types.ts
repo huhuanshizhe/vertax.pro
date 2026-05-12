@@ -28,6 +28,7 @@ export type ProspectField =
   | 'state'
   | 'phone'
   | 'linkedinUrl'
+  | 'facebookUrl'
   | 'tags';
 
 /** 列映射：源列名 → 标准字段 */
@@ -57,6 +58,7 @@ export interface NormalizedCompanyData {
   state?: string | null;
   phone?: string | null;
   linkedinUrl?: string | null;
+  facebookUrl?: string | null;
   tags?: string[];
 }
 

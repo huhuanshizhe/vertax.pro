@@ -6,7 +6,8 @@ import type {
   AdapterConfig, 
   AdapterFactory, 
   AdapterRegistration,
-  SourceReliability
+  SourceReliability,
+  ChannelType
 } from './types';
 import { UNGMAdapter } from './ungm';
 import { TEDAdapter } from './ted';
@@ -1011,6 +1012,119 @@ export function ensureAdaptersInitialized(): void {
     (config) => new ApolloPeopleSearchAdapter(config)
   );
 
+  // ==================== Social SERP 适配器（BraveSearch reuse） ====================
+
+  const SOCIAL_PARSE_PROMPT = `你是社交媒体企业页面分析专家。分析搜索结果中的企业社交媒体页面，提取公司信息。
+
+输出要求：
+1. 只提取真实的企业/品牌主页，排除个人账号、新闻页、群组
+2. 提取公司名称、官网（如有）、行业、国家/城市、简要描述
+3. 评估匹配置信度（0-1）和匹配信号
+4. 优先关注：已认证企业页、有完整信息的企业主页
+
+输出严格的 JSON 格式：
+{
+  "companies": [
+    {
+      "name": "公司名称",
+      "website": "https://...",
+      "description": "公司简介（从社交页面摘取）",
+      "industry": "行业",
+      "country": "ISO 3166-1 alpha-2 country code if known, otherwise empty string",
+      "city": "城市",
+      "sourceUrl": "社交媒体页面URL",
+      "confidence": 0.8,
+      "signals": ["企业主页", "已认证", "行业匹配"]
+    }
+  ]
+}`;
+
+  // 注册 Facebook SERP 适配器
+  registerAdapter(
+    {
+      code: 'social_facebook_serp',
+      name: 'Facebook 企业页面发现',
+      channelType: 'SOCIAL' as ChannelType,
+      adapterType: 'AI_SEARCH',
+      description: '通过 Brave Search 搜索 Facebook 企业页面，发现目标公司的社交媒体存在',
+      features: {
+        supportsKeywordSearch: true,
+        supportsCategoryFilter: false,
+        supportsDateFilter: false,
+        supportsRegionFilter: true,
+        supportsPagination: false,
+        supportsDetails: false,
+        maxResultsPerQuery: 20,
+        rateLimit: { requests: 10, windowMs: 60000 },
+      },
+      defaultConfig: {
+        timeout: 30000,
+        sourceCode: 'social_facebook_serp',
+        channelType: 'SOCIAL',
+        queryPrefix: 'site:facebook.com',
+        parsePromptOverride: SOCIAL_PARSE_PROMPT,
+      },
+      storagePolicy: 'TTL_CACHE',
+      ttlDays: 60,
+      attributionRequired: false,
+      isOfficial: false,
+      websiteUrl: 'https://brave.com/search/api/',
+      reliability: {
+        dataType: 'AI_INFERRED',
+        qualityLevel: 'UNSTABLE',
+        requiresAuth: true,
+        authMethod: 'Brave Search API Key',
+        updateFrequency: 'REAL_TIME',
+        coverageNote: 'Facebook 企业主页搜索',
+        limitations: ['搜索结果需要验证', '部分企业页可能不公开'],
+      },
+    },
+    (config) => new BraveSearchAdapter(config)
+  );
+
+  // 注册 LinkedIn SERP 适配器
+  registerAdapter(
+    {
+      code: 'social_linkedin_serp',
+      name: 'LinkedIn 企业页面发现',
+      channelType: 'SOCIAL' as ChannelType,
+      adapterType: 'AI_SEARCH',
+      description: '通过 Brave Search 搜索 LinkedIn 企业页面，发现目标公司的专业社交存在',
+      features: {
+        supportsKeywordSearch: true,
+        supportsCategoryFilter: false,
+        supportsDateFilter: false,
+        supportsRegionFilter: true,
+        supportsPagination: false,
+        supportsDetails: false,
+        maxResultsPerQuery: 20,
+        rateLimit: { requests: 10, windowMs: 60000 },
+      },
+      defaultConfig: {
+        timeout: 30000,
+        sourceCode: 'social_linkedin_serp',
+        channelType: 'SOCIAL',
+        queryPrefix: 'site:linkedin.com/company',
+        parsePromptOverride: SOCIAL_PARSE_PROMPT,
+      },
+      storagePolicy: 'TTL_CACHE',
+      ttlDays: 60,
+      attributionRequired: false,
+      isOfficial: false,
+      websiteUrl: 'https://brave.com/search/api/',
+      reliability: {
+        dataType: 'AI_INFERRED',
+        qualityLevel: 'UNSTABLE',
+        requiresAuth: true,
+        authMethod: 'Brave Search API Key',
+        updateFrequency: 'REAL_TIME',
+        coverageNote: 'LinkedIn 企业页面搜索',
+        limitations: ['搜索结果需要验证', 'LinkedIn 反爬可能限制结果'],
+      },
+    },
+    (config) => new BraveSearchAdapter(config)
+  );
+
   initialized = true;
 }
 
@@ -1045,6 +1159,9 @@ export const ADAPTER_CODES = {
   // Apollo B2B 数据库
   APOLLO_ORG_SEARCH: 'apollo_org_search',
   APOLLO_PEOPLE_SEARCH: 'apollo_people_search',
+  // Social SERP
+  SOCIAL_FACEBOOK_SERP: 'social_facebook_serp',
+  SOCIAL_LINKEDIN_SERP: 'social_linkedin_serp',
   // 后续扩展
   CSV_IMPORT: 'csv_import',
 } as const;

@@ -147,6 +147,19 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
       // 处理每个候选
       for (const item of result.items) {
         try {
+          // excludeKeywords 过滤：排除含有指定词的结果
+          if (query.excludeKeywords?.length) {
+            const textToCheck = [item.displayName, item.description, item.industry]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase();
+            const excluded = query.excludeKeywords.some(kw => textToCheck.includes(kw.toLowerCase()));
+            if (excluded) {
+              stats.duplicates++; // 计入 duplicates（被过滤）
+              continue;
+            }
+          }
+
           const processed = await processCandidate(task, item, stats);
           if (processed.autoEnrich && processed.createdCandidateId) {
             autoEnrichQueue.push(processed.createdCandidateId);

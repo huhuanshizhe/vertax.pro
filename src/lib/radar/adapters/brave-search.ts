@@ -9,6 +9,7 @@ import type {
   HealthStatus,
   AdapterFeatures,
   AdapterConfig,
+  ChannelType,
 } from './types';
 import { chatCompletion } from '@/lib/ai-client';
 import { getCountryDisplayName } from '../country-utils';
@@ -70,8 +71,8 @@ function extractJsonPayload(content: string): string {
 // ==================== Brave Search 适配器 ====================
 
 export class BraveSearchAdapter implements RadarAdapter {
-  readonly sourceCode = 'brave_search';
-  readonly channelType = 'DIRECTORY' as const;  // 用于发现公司目录
+  readonly sourceCode: string;
+  readonly channelType: ChannelType;
   
   readonly supportedFeatures: AdapterFeatures = {
     supportsKeywordSearch: true,
@@ -86,10 +87,16 @@ export class BraveSearchAdapter implements RadarAdapter {
 
   private apiKey: string;
   private timeout: number;
+  private queryPrefix: string;
+  private parsePromptOverride?: string;
 
   constructor(config: AdapterConfig) {
     this.apiKey = config.apiKey || process.env.BRAVE_SEARCH_API_KEY || '';
     this.timeout = config.timeout || 30000;
+    this.sourceCode = config.sourceCode || 'brave_search';
+    this.channelType = (config.channelType || 'DIRECTORY') as ChannelType;
+    this.queryPrefix = config.queryPrefix || '';
+    this.parsePromptOverride = config.parsePromptOverride;
   }
 
   async search(query: RadarSearchQuery): Promise<RadarSearchResult> {
@@ -103,13 +110,15 @@ export class BraveSearchAdapter implements RadarAdapter {
     const searchQueries = this.generateSearchQueries(query);
     
     // 游标支持：从上次的 queryIndex 继续
-    const startIndex = query.cursor?.queryIndex ?? 0;
+    // rawQueryText already represents one planned query from the scan engine.
+    // The scan engine owns that global queryIndex, so adapter-local slicing must start at 0.
+    const startIndex = query.rawQueryText ? 0 : (query.cursor?.queryIndex ?? 0);
     const queriesToRun = searchQueries.slice(startIndex, startIndex + 3);
     
     // 执行搜索
     const allResults: BraveSearchResult[] = [];
     for (const sq of queriesToRun) {
-      const results = await this.executeSearch(sq, query.countries?.[0]);
+      const results = await this.executeSearch(sq, query.countries?.[0], query.plannedQueryMeta?.language);
       allResults.push(...results);
       // 速率限制
       if (queriesToRun.length > 1) {
@@ -147,52 +156,63 @@ export class BraveSearchAdapter implements RadarAdapter {
    * 生成多角度搜索查询
    */
   private generateSearchQueries(query: RadarSearchQuery): string[] {
+    if (query.rawQueryText?.trim()) {
+      const raw = query.rawQueryText.trim();
+      // queryPrefix already baked into PlannedQuery text for social adapters;
+      // but if rawQueryText doesn't already contain it, prepend.
+      if (this.queryPrefix && !raw.startsWith(this.queryPrefix)) {
+        return [`${this.queryPrefix} ${raw}`];
+      }
+      return [raw];
+    }
+
     const queries: string[] = [];
     const keywords = query.keywords?.join(' ') || '';
     const industries = query.targetIndustries || [];
     const countries = query.countries || [];
     const companyTypes = query.companyTypes || [];
+    const prefix = this.queryPrefix ? `${this.queryPrefix} ` : '';
     
     // 基础查询：关键词 + 公司类型
     if (keywords) {
       const typeStr = companyTypes.includes('manufacturer') ? 'manufacturer factory' : 
                       companyTypes.includes('distributor') ? 'supplier distributor' : 
                       'company';
-      queries.push(`${keywords} ${typeStr}`);
+      queries.push(`${prefix}${keywords} ${typeStr}`);
     }
     
     // 行业 + 地区查询
     if (industries.length && countries.length) {
       const countryName = getCountryDisplayName(countries[0]) || countries[0];
-      queries.push(`${industries[0]} companies in ${countryName}`);
+      queries.push(`${prefix}${industries[0]} companies in ${countryName}`);
     }
     
     // B2B 目录查询
     if (keywords) {
-      queries.push(`${keywords} B2B suppliers directory`);
+      queries.push(`${prefix}${keywords} B2B suppliers directory`);
     }
     
     // 展会/协会查询（高质量来源）
     if (industries.length) {
-      queries.push(`${industries[0]} manufacturers association members`);
+      queries.push(`${prefix}${industries[0]} manufacturers association members`);
     }
     
-    return queries.length > 0 ? queries : ['industrial manufacturers'];
+    return queries.length > 0 ? queries : [`${prefix}industrial manufacturers`.trim()];
   }
 
   /**
    * 执行 Brave Search
    */
-  private async executeSearch(query: string, country?: string): Promise<BraveSearchResult[]> {
+  private async executeSearch(query: string, country?: string, language?: string): Promise<BraveSearchResult[]> {
     const params = new URLSearchParams({
       q: query,
       count: '20',
       result_filter: 'web',
-      search_lang: 'en',
+      search_lang: language || 'en',
       safesearch: 'off',
     });
     
-    if (country) {
+    if (country && country.toUpperCase() !== 'ALL') {
       params.set('country', country.toLowerCase());
     }
     
@@ -225,7 +245,7 @@ export class BraveSearchAdapter implements RadarAdapter {
   ): Promise<ParsedCompany[]> {
     if (results.length === 0) return [];
     
-    const systemPrompt = `你是B2B公司研究专家。分析搜索结果，识别其中的目标公司（制造商、供应商、分销商等），提取公司信息。
+    const systemPrompt = this.parsePromptOverride || `你是B2B公司研究专家。分析搜索结果，识别其中的目标公司（制造商、供应商、分销商等），提取公司信息。
 
 输出要求：
 1. 只提取真实的公司/企业，排除新闻、文章、论坛
@@ -288,7 +308,7 @@ ${JSON.stringify(results.slice(0, 20).map(r => ({
    * 将解析结果转换为标准候选
    */
   private normalizeCompany(company: ParsedCompany): NormalizedCandidate {
-    const externalId = `brave_${Date.now()}_${this.hashString(company.website || company.name)}`;
+    const externalId = `${this.sourceCode}_${Date.now()}_${this.hashString(company.website || company.name)}`;
     
     return {
       externalId,
@@ -303,13 +323,13 @@ ${JSON.stringify(results.slice(0, 20).map(r => ({
       industry: company.industry,
       
       matchExplain: {
-        channel: 'brave_search',
+        channel: this.sourceCode,
         reasons: company.signals,
         matchedKeywords: company.signals,
       },
       
       rawData: {
-        source: 'brave_search',
+        source: this.sourceCode,
         confidence: company.confidence,
         originalData: company,
       },
