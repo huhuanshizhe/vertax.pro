@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { generateStorageKey, generatePresignedPutUrl } from "@/lib/oss";
+import { generateStorageKey, generatePresignedPutUrl, checkOSSConfigSync } from "@/lib/oss";
 import { detectFileCategory, getFileExtension } from "@/lib/utils/file-utils";
 import { extractTextFromAsset } from "@/lib/utils/text-extract";
 import { splitTextIntoChunks } from "@/lib/utils/chunk-utils";
@@ -58,6 +58,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "No files provided" }, { status: 400 });
     }
 
+    // OSS 配置预检：在创建 DB 记录前确认存储服务可用
+    const ossConfigError = checkOSSConfigSync();
+    if (ossConfigError) {
+      console.error("[/api/assets/upload] OSS config pre-check failed:", ossConfigError);
+      return NextResponse.json(
+        { error: `文件存储服务配置异常：${ossConfigError}` },
+        { status: 503 }
+      );
+    }
+
     const sessions = await Promise.all(
       files.map(async (file) => {
         const storageKey = generateStorageKey(tenantId, file.originalName);
@@ -108,9 +118,20 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ ok: true, sessions });
   } catch (error: unknown) {
-    const msg = error instanceof Error ? error.message : "Internal server error";
-    console.error("[/api/assets/upload] error:", msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const rawMsg = error instanceof Error ? error.message : "Internal server error";
+    console.error("[/api/assets/upload] error:", rawMsg);
+
+    // 将常见 OSS SDK 错误转为可操作的中文提示
+    let userMsg = rawMsg;
+    if (rawMsg.includes("endpoint must be conform") || rawMsg.includes("OSS_ENDPOINT 格式不正确")) {
+      userMsg = "文件存储服务配置异常：OSS_ENDPOINT 格式不正确，请检查环境变量配置";
+    } else if (rawMsg.includes("Missing OSS configuration")) {
+      userMsg = "文件存储服务配置缺失，请联系管理员检查环境变量";
+    } else if (rawMsg.includes("AccessDenied") || rawMsg.includes("InvalidAccessKeyId")) {
+      userMsg = "文件存储服务认证失败，请联系管理员检查 OSS 密钥配置";
+    }
+
+    return NextResponse.json({ error: userMsg }, { status: 500 });
   }
 }
 

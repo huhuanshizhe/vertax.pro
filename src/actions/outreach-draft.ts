@@ -13,6 +13,8 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { chatCompletion } from '@/lib/ai-client';
 import { sendEmail } from '@/lib/email/resend-client';
+import { getTenantEmailDefaults } from '@/lib/email/tenant-email-defaults';
+import { cleanOutreachSubject, cleanOutreachBody } from '@/lib/email/outreach-copy-cleaner';
 import { enrichWithSignalScore } from '@/lib/radar/intelligence-enricher';
 import {
   formatCandidateContactHint,
@@ -172,7 +174,7 @@ ${contactProfile.complianceNote ? `- 联系方式合规说明：${contactProfile
    - CTA（1句）：邀请 15 分钟电话或请求回复
 3. 主题行：简短有力，不超过 60 字符，避免垃圾邮件关键词
 4. 称呼：使用 ${firstContact?.name ? `Hi ${firstContact.name.split(' ')[0]},` : 'Dear [Name],'}
-5. 签名：仅写 [Your Name]，不用填具体人名
+5. 签名：写 {{SENDER_SIGNATURE}}，系统会自动替换为发件人真实信息
 
 只输出 JSON，格式严格如下，不要包含任何额外说明：
 {
@@ -235,12 +237,20 @@ export async function sendOutreachDraft(draft: OutreachDraft): Promise<DraftSend
     if (!prospect) return { success: false, error: '线索公司不存在或无权访问' };
   }
 
-  // 发送邮件
+  // 发送邮件（清理占位符）
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { slug: true },
+  });
+  const { signature } = getTenantEmailDefaults(tenant);
+  const cleanedSubject = cleanOutreachSubject(draft.subject);
+  const cleanedBody = cleanOutreachBody(draft.body, signature || 'Best regards');
+
   const sendResult = await sendEmail({
     to: draft.toEmail,
     tenantId,
-    subject: draft.subject,
-    html: draft.body.replace(/\n/g, '<br>'),
+    subject: cleanedSubject,
+    html: cleanedBody.replace(/\n/g, '<br>'),
   });
 
   if (!sendResult.success) {
@@ -254,8 +264,8 @@ export async function sendOutreachDraft(draft: OutreachDraft): Promise<DraftSend
       candidateId: draft.candidateId || null,
       toEmail: draft.toEmail,
       toName: draft.toName,
-      subject: draft.subject,
-      bodyText: draft.body,
+      subject: cleanedSubject,
+      bodyText: cleanedBody,
       messageId: sendResult.messageId,
       status: 'sent',
       sentAt: new Date(),

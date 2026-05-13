@@ -5,6 +5,7 @@ export interface TenantEmailDefaultInput {
 export interface TenantEmailDefaults {
   replyToEmail?: string;
   fromEmail?: string;
+  signature?: string;
 }
 
 const REPLY_TO_BY_TENANT: Record<string, string> = {
@@ -15,6 +16,14 @@ const REPLY_TO_BY_TENANT: Record<string, string> = {
 
 const FROM_EMAIL_BY_TENANT: Record<string, string> = {
   machrio: 'VertaX <noreply@mail.machrio.com>',
+  tdpaint: 'TD Painting <noreply@marketing.tdpaint.com>',
+  tdpaintcell: 'TD Painting <noreply@marketing.tdpaint.com>',
+};
+
+const SIGNATURE_BY_TENANT: Record<string, string> = {
+  tdpaint: 'Best regards,\nTD Painting Engineering Team\nengineering@tdpaint.com',
+  tdpaintcell: 'Best regards,\nTD Painting Engineering Team\nengineering@tdpaint.com',
+  machrio: 'Best regards,\nMachrio Sales Team\nsales@machrio.com',
 };
 
 export function getTenantEmailDefaults(tenant?: TenantEmailDefaultInput | null): TenantEmailDefaults {
@@ -25,8 +34,9 @@ export function getTenantEmailDefaults(tenant?: TenantEmailDefaultInput | null):
 
   const replyToEmail = REPLY_TO_BY_TENANT[slug];
   const fromEmail = FROM_EMAIL_BY_TENANT[slug];
+  const signature = SIGNATURE_BY_TENANT[slug];
 
-  if (!replyToEmail && !fromEmail) {
+  if (!replyToEmail && !fromEmail && !signature) {
     return {};
   }
 
@@ -36,6 +46,9 @@ export function getTenantEmailDefaults(tenant?: TenantEmailDefaultInput | null):
   }
   if (fromEmail) {
     defaults.fromEmail = fromEmail;
+  }
+  if (signature) {
+    defaults.signature = signature;
   }
 
   return defaults;

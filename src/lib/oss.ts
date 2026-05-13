@@ -8,7 +8,30 @@ const OSS_REGION = process.env.OSS_REGION;
 const OSS_ACCESS_KEY_ID = process.env.OSS_ACCESS_KEY_ID;
 const OSS_ACCESS_KEY_SECRET = process.env.OSS_ACCESS_KEY_SECRET;
 const OSS_BUCKET = process.env.OSS_BUCKET;
-const OSS_ENDPOINT = process.env.OSS_ENDPOINT;
+const OSS_ENDPOINT_RAW = process.env.OSS_ENDPOINT;
+
+/**
+ * Normalize OSS_ENDPOINT：去掉首尾空格和引号，校验格式。
+ * ali-oss 内部只允许 [a-zA-Z0-9._:/-]，否则抛 "The endpoint must be conform to the specifications"。
+ */
+function normalizeEndpoint(raw: string | undefined): string | undefined {
+  if (!raw) return undefined;
+  // 去掉首尾空格和可能被误粘贴的引号
+  let cleaned = raw.trim().replace(/^["']+|["']+$/g, "");
+  // 去掉尾部斜杠
+  cleaned = cleaned.replace(/\/+$/, "");
+  if (!cleaned) return undefined;
+  // ali-oss 合法 endpoint 正则：只允许字母、数字、点、下划线、冒号、斜杠、横线
+  const ENDPOINT_RE = /^[a-zA-Z0-9._:\/\-]+$/;
+  if (!ENDPOINT_RE.test(cleaned)) {
+    throw new Error(
+      `OSS_ENDPOINT 格式不正确，当前值: "${cleaned}"。合法格式示例: https://oss-cn-hangzhou.aliyuncs.com`
+    );
+  }
+  return cleaned;
+}
+
+const OSS_ENDPOINT = normalizeEndpoint(OSS_ENDPOINT_RAW);
 
 // 检查必要的环境变量
 function checkConfig() {
@@ -17,6 +40,29 @@ function checkConfig() {
       "Missing OSS configuration. Please set OSS_REGION, OSS_ACCESS_KEY_ID, OSS_ACCESS_KEY_SECRET, and OSS_BUCKET environment variables."
     );
   }
+}
+
+/**
+ * 预检 OSS 配置是否可用（不实际发起网络请求，只做本地校验）。
+ * 返回 null 表示正常，否则返回人类可读的错误信息。
+ */
+export function checkOSSConfigSync(): string | null {
+  if (!OSS_REGION || !OSS_ACCESS_KEY_ID || !OSS_ACCESS_KEY_SECRET || !OSS_BUCKET) {
+    const missing: string[] = [];
+    if (!OSS_REGION) missing.push("OSS_REGION");
+    if (!OSS_ACCESS_KEY_ID) missing.push("OSS_ACCESS_KEY_ID");
+    if (!OSS_ACCESS_KEY_SECRET) missing.push("OSS_ACCESS_KEY_SECRET");
+    if (!OSS_BUCKET) missing.push("OSS_BUCKET");
+    return `文件存储服务配置缺失: ${missing.join(", ")}`;
+  }
+  // normalizeEndpoint 在模块加载时已经执行过，如果格式有问题会直接抛错。
+  // 这里再做一次安全检查（防止运行时动态修改 env 后调用）
+  try {
+    normalizeEndpoint(process.env.OSS_ENDPOINT);
+  } catch (e) {
+    return e instanceof Error ? e.message : "OSS_ENDPOINT 格式不正确";
+  }
+  return null;
 }
 
 // OSS 客户端单例

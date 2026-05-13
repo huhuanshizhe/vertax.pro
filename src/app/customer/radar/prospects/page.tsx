@@ -513,6 +513,15 @@ export default function RadarProspectsPage() {
     outreachPackRef.current = outreachPack;
   }, [outreachPack]);
 
+  const updateOutreachEmail = (idx: number, field: 'subject' | 'body', value: string) => {
+    setOutreachPack(prev => {
+      if (!prev) return prev;
+      const emails = [...prev.outreachPack.emails];
+      emails[idx] = { ...emails[idx], [field]: value };
+      return { ...prev, outreachPack: { ...prev.outreachPack, emails } };
+    });
+  };
+
   const handleExport = async () => {
     setIsExporting(true);
     try {
@@ -2428,9 +2437,14 @@ export default function RadarProspectsPage() {
                           {outreachPack.outreachPack.emails.map((email, idx) => (
                             <div key={idx} className="bg-[#FFFFFF] rounded-xl border border-[var(--ci-border)] overflow-hidden">
                               <div className="bg-[var(--ci-surface-muted)] px-4 py-2 flex items-center justify-between">
-                                <div>
-                                  <span className="text-xs text-slate-500">主题:</span>
-                                  <span className="text-sm font-medium text-[#0B1B2B] ml-2">{email.subject}</span>
+                                <div className="flex-1 flex items-center min-w-0">
+                                  <span className="text-xs text-slate-500 shrink-0">主题:</span>
+                                  <input
+                                    type="text"
+                                    value={email.subject}
+                                    onChange={e => updateOutreachEmail(idx, 'subject', e.target.value)}
+                                    className="text-sm font-medium text-[#0B1B2B] ml-2 bg-transparent border-0 outline-none w-full focus:ring-0 p-0"
+                                  />
                                 </div>
                                 <div className="flex items-center gap-1">
                                   {/* v2.0: 发送按钮 */}
@@ -2490,9 +2504,12 @@ export default function RadarProspectsPage() {
                                 </div>
                               </div>
                               <div className="p-4">
-                                <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
-                                  {email.body}
-                                </p>
+                                <textarea
+                                  value={email.body}
+                                  onChange={e => updateOutreachEmail(idx, 'body', e.target.value)}
+                                  className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed w-full min-h-[180px] resize-y bg-transparent border-0 outline-none focus:ring-0 p-0"
+                                />
+                                <p className="text-[11px] text-slate-400 mt-2">可直接编辑后发送或复制</p>
                               </div>
                             </div>
                           ))}
@@ -2504,6 +2521,9 @@ export default function RadarProspectsPage() {
                             暂无可用邮箱，请补全联系人信息或手动添加
                           </p>
                         )}
+                        <p className="text-[11px] text-slate-400 mt-3 text-center">
+                          编辑不会覆盖历史版本，保存草稿快照后才会入库
+                        </p>
                       </div>
 
                       {/* WhatsApp Templates */}

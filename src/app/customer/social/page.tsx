@@ -1032,7 +1032,7 @@ export default function SocialPage() {
                       accept="image/png,image/jpeg,image/webp,image/gif"
                       className="hidden"
                       disabled={isUploadingImage}
-                      onChange={(e) => handleImageUpload(e.target.files?.[0] || null)}
+                      onChange={(e) => { handleImageUpload(e.target.files?.[0] || null); e.target.value = ''; }}
                     />
                   </label>
 
@@ -1111,7 +1111,7 @@ export default function SocialPage() {
                       accept="video/mp4,video/quicktime,video/webm"
                       className="hidden"
                       disabled={isUploadingTikTok}
-                      onChange={(e) => handleTikTokVideoUpload(e.target.files?.[0] || null)}
+                      onChange={(e) => { handleTikTokVideoUpload(e.target.files?.[0] || null); e.target.value = ''; }}
                     />
                   </label>
 

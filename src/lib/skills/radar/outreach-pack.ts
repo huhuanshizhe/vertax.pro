@@ -84,7 +84,13 @@ Use source labels D1-D7 for dossier-backed claims, and C1 for contact execution 
 1. 每条核心主张必须引用至少1条Evidence（用[E1]形式标注）
 2. 禁词/合规边界命中要在warnings里输出
 3. 语气真实克制，不夸大，不承诺无法证明的指标
-4. 必须包含尊重隐私/退订选项的句子（英文版用opt-out）`,
+4. 必须包含尊重隐私/退订选项的句子（英文版用opt-out）
+
+邮件正文特殊约束：
+5. 【关键】邮件 body 和 subject 中禁止出现任何方括号引用标记如 [D1]、[E1]、[C1]、[Your Name] 等。
+   所有证据引用仅通过 evidenceIds 数组传递，正文直接使用具体公司名/人名/数据。
+6. 邮件末尾签名统一使用 {{SENDER_SIGNATURE}} 占位符（单独一行），系统会自动替换为发件人真实信息。
+   不要输出 [Your Name]、[Your Position] 等方括号占位符。`,
   
   buildUserPrompt: (ctx: PromptContext) => {
     const { input, companyProfile, evidences } = ctx;
