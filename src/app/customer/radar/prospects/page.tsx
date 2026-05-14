@@ -517,6 +517,20 @@ export default function RadarProspectsPage() {
   const linkedInOutreachContacts = outreachContacts.filter((contact) => Boolean(contact.linkedInUrl));
   const whatsappContact = phoneOutreachContacts[0] ?? null;
 
+  // Auto-select first email contact (mirrors whatsappContact pattern)
+  useEffect(() => {
+    if (emailOutreachContacts.length > 0 && !emailOutreachContacts.some(c => c.id === selectedEmailContact?.id)) {
+      setSelectedEmailContact(emailOutreachContacts[0]);
+    }
+  }, [emailOutreachContacts, selectedEmailContact]);
+
+  // Auto-select first LinkedIn contact
+  useEffect(() => {
+    if (linkedInOutreachContacts.length > 0 && !linkedInOutreachContacts.some(c => c.id === selectedLinkedInContact?.id)) {
+      setSelectedLinkedInContact(linkedInOutreachContacts[0]);
+    }
+  }, [linkedInOutreachContacts, selectedLinkedInContact]);
+
   useEffect(() => {
     outreachPackRef.current = outreachPack;
   }, [outreachPack]);
@@ -2520,7 +2534,7 @@ export default function RadarProspectsPage() {
                                       }}
                                       disabled={isSendingEmail === `email-${idx}`}
                                       className="p-1.5 text-emerald-500 hover:text-emerald-600 transition-colors disabled:opacity-50"
-                                      title="发送邮件"
+                                      title={`发送邮件给 ${selectedEmailContact?.name} <${selectedEmailContact?.email}>`}
                                     >
                                       {emailSentId === `email-${idx}` ? (
                                         <Check size={14} className="text-emerald-600" />

@@ -211,8 +211,8 @@ export default function RadarCandidatesPage() {
   const [_emailSent, setEmailSent] = useState(false);
   const [_emailError, setEmailError] = useState<string | null>(null);
 
-  // 背调状态
-  const [isResearching, setIsResearching] = useState(false);
+  // 背调状态 - researchingId 绑定当前正在分析的公司ID，避免全局loading互相污染
+  const [researchingId, setResearchingId] = useState<string | null>(null);
   const [researchData, setResearchData] = useState<ResearchData | null>(null);
   const [researchError, setResearchError] = useState<string | null>(null);
 
@@ -480,9 +480,9 @@ export default function RadarCandidatesPage() {
     }
   };
 
-  // 执行客户背调
+  // 执行客户背调（手动重新分析）
   const handleResearch = async (candidate: CandidateWithSource) => {
-    setIsResearching(true);
+    setResearchingId(candidate.id);
     setResearchError(null);
 
     try {
@@ -498,55 +498,77 @@ export default function RadarCandidatesPage() {
         setResearchData(result.data);
         loadData(true);
       } else {
-        setResearchError(result.error || result.details || '背调失败');
+        setResearchError(result.error || result.details || '分析失败');
       }
     } catch (err) {
-      setResearchError(err instanceof Error ? err.message : '背调失败');
+      setResearchError(err instanceof Error ? err.message : '分析失败');
     } finally {
-      setIsResearching(false);
+      setResearchingId(null);
     }
   };
 
   // 加载已有背调结果
-  const loadResearchData = async (candidateId: string) => {
+  const loadResearchData = async (candidateId: string, signal?: AbortSignal) => {
     try {
-      const response = await fetch(`/api/research/company?candidateId=${candidateId}`);
+      const response = await fetch(`/api/research/company?candidateId=${candidateId}`, { signal });
       const result = await response.json();
       if (result.success && result.data) {
         setResearchData(result.data);
         return true; // 有背调结果
       }
       return false; // 无背调结果
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') return false;
       return false;
     }
   };
 
   // v2.0: 当选择候选时，加载背调结果，如果没有则自动触发背调
+  // 使用 AbortController 确保切换公司时取消旧请求，防止 loading 状态互相污染
   useEffect(() => {
+    const controller = new AbortController();
+
     if (selectedCandidate) {
+      const candidateId = selectedCandidate.id;
+
+      // 重置状态
+      setResearchData(null);
+      setResearchError(null);
+
       // 先加载已有的背调结果
-      loadResearchData(selectedCandidate.id).then((hasResult) => {
-        // 如果没有背调结果，自动触发背调（避免调用handleResearch导致依赖问题）
+      loadResearchData(candidateId, controller.signal).then((hasResult) => {
+        if (controller.signal.aborted) return; // stale guard
+        // 如果没有背调结果，自动触发背调
         if (!hasResult) {
-          setIsResearching(true);
+          setResearchingId(candidateId);
           fetch('/api/research/company', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ candidateId: selectedCandidate.id }),
+            body: JSON.stringify({ candidateId }),
+            signal: controller.signal,
           })
             .then(res => res.json())
             .then(result => {
+              if (controller.signal.aborted) return; // stale guard
               if (result.success) {
                 setResearchData(result.data);
+              } else {
+                setResearchError(result.error || '分析失败');
               }
             })
-            .catch(() => {})
-            .finally(() => setIsResearching(false));
+            .catch((err) => {
+              if (err instanceof Error && err.name === 'AbortError') return;
+            })
+            .finally(() => {
+              if (!controller.signal.aborted) {
+                setResearchingId(null);
+              }
+            });
         }
       });
     } else {
       setResearchData(null);
+      setResearchingId(null);
     }
     setOutreachDraft(null);
     setDraftError(null);
@@ -554,6 +576,8 @@ export default function RadarCandidatesPage() {
     setEnrichDone(false);
     setLinkedInDraft(null);
     setLinkedInCopied(false);
+
+    return () => controller.abort();
   }, [selectedCandidate]);
 
   // 生成 AI 草稿（P2）
@@ -750,7 +774,7 @@ export default function RadarCandidatesPage() {
     : null;
 
   return (
-    <div className="space-y-6">
+    <div className="flex h-full flex-col overflow-hidden">
       {/* RadarHeader with Stepper */}
       <RadarHeader
         title="AI 推荐"
@@ -764,7 +788,7 @@ export default function RadarCandidatesPage() {
         onRefresh={handleRefresh}
       />
 
-      <div className="p-6 space-y-4">
+      <div className="flex-1 min-h-0 flex flex-col gap-4 p-6 overflow-hidden">
         {/* Error Alert */}
         {error && (
           <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3">
@@ -776,7 +800,7 @@ export default function RadarCandidatesPage() {
           </div>
         )}
 
-        <div className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-4">
+        <div className="shrink-0 rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-4">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#9A7A1C]">AI 智能筛选</div>
@@ -907,11 +931,11 @@ export default function RadarCandidatesPage() {
         )}
 
         {/* Main Content */}
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(380px,0.9fr)]">
+        <div className="flex-1 min-h-0 grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(380px,0.9fr)]">
             {/* Candidates List */}
-          <div className="min-w-0 overflow-hidden rounded-xl border border-[var(--ci-border)] bg-[var(--ci-surface-strong)] shadow-[var(--ci-shadow-soft)]">
+          <div className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-[var(--ci-border)] bg-[var(--ci-surface-strong)] shadow-[var(--ci-shadow-soft)]">
             {/* List Header */}
-            <div className="border-b border-[var(--ci-border)] bg-[var(--ci-surface-muted)] px-4 py-3">
+            <div className="shrink-0 border-b border-[var(--ci-border)] bg-[var(--ci-surface-muted)] px-4 py-3">
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
@@ -934,6 +958,8 @@ export default function RadarCandidatesPage() {
               </div>
             </div>
             
+            {/* Scrollable list area */}
+            <div className="flex-1 min-h-0 overflow-y-auto">
             {/* Empty States */}
             {emptyStateType && (
               <div className="text-center py-16 px-6">
@@ -1015,9 +1041,7 @@ export default function RadarCandidatesPage() {
                         setEmailSent(false);
                         setEmailError(null);
                         setManualEmail('');
-                        // 重置背调状态
-                        setResearchData(null);
-                        setResearchError(null);
+                        // 背调状态由 useEffect cleanup (AbortController) 自动处理，无需手动重置
                         // 重置邮件序列状态
                         setEmailSequence(null);
                         setSequenceError(null);
@@ -1101,10 +1125,11 @@ export default function RadarCandidatesPage() {
                 })}
               </div>
             )}
+            </div>{/* end scrollable list area */}
           </div>
 
           {/* Detail Panel */}
-          <div className="space-y-4 xl:sticky xl:top-6">
+          <div className="min-h-0 overflow-y-auto space-y-4">
             {selectedCandidate ? (
               <>
                 {/* Basic Info Card */}
@@ -1512,7 +1537,7 @@ export default function RadarCandidatesPage() {
                     )}
                   </div>
 
-                  {isResearching ? (
+                  {researchingId === selectedCandidate.id ? (
                     <div className="flex items-center justify-center py-8">
                       <Loader2 size={24} className="text-[var(--ci-accent)] animate-spin" />
                       <span className="ml-2 text-sm text-slate-500">AI正在深度分析...</span>
@@ -1613,14 +1638,25 @@ export default function RadarCandidatesPage() {
                       </button>
                     </div>
                   ) : (
-                    // v2.0: 背调改为自动触发，不再显示手动按钮
+                    // 无数据且无 loading → 显示错误信息或等待状态
                     <div className="text-center py-6">
-                      <Loader2 size={20} className="text-[var(--ci-accent)] animate-spin mx-auto mb-2" />
-                      <p className="text-xs text-slate-500">
-                        AI 正在分析中...
-                      </p>
-                      {researchError && (
-                        <p className="text-xs text-red-500 mt-2">{researchError}</p>
+                      {researchError ? (
+                        <>
+                          <p className="text-xs text-red-500">{researchError}</p>
+                          <button
+                            onClick={() => handleResearch(selectedCandidate)}
+                            className="mt-3 text-xs text-[var(--ci-accent)] hover:underline"
+                          >
+                            重试分析
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 size={20} className="text-[var(--ci-accent)] animate-spin mx-auto mb-2" />
+                          <p className="text-xs text-slate-500">
+                            正在加载分析数据...
+                          </p>
+                        </>
                       )}
                     </div>
                   )}
