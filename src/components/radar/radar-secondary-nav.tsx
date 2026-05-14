@@ -31,8 +31,46 @@ export function RadarSecondaryNav() {
     ];
   })().sort((left, right) => left.order - right.order);
 
+  // 在子页面显示紧凑标签栏，在 Radar 首页显示完整卡片导航
+  const isSubPage = pathname !== "/customer/radar" && pathname?.startsWith("/customer/radar/");
+
+  if (isSubPage) {
+    return (
+      <div className="shrink-0 flex items-center gap-2 rounded-xl border border-[var(--ci-border)] bg-white/88 px-3 py-2 shadow-[var(--ci-shadow-soft)] backdrop-blur-sm">
+        <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-[rgba(79,141,246,0.10)] text-[var(--ci-accent)] ring-1 ring-[rgba(79,141,246,0.18)]">
+          <Radar size={13} />
+        </div>
+        <span className="text-xs font-semibold text-[var(--ci-accent-strong)] mr-1">Radar</span>
+        <div className="h-4 w-px bg-[var(--ci-border)]" />
+        <div className="flex items-center gap-1 overflow-x-auto">
+          {items.map((item) => {
+            const active =
+              pathname === item.href || (item.href !== "/customer/radar" && pathname?.startsWith(item.href));
+            const Icon = item.icon;
+
+            return (
+              <Link
+                key={item.key}
+                href={item.href}
+                className={`flex items-center gap-1.5 whitespace-nowrap rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  active
+                    ? "bg-[rgba(79,141,246,0.10)] text-[var(--ci-accent)]"
+                    : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+                }`}
+              >
+                <Icon size={13} />
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  // 完整卡片导航（Radar 首页/概览页）
   return (
-    <div className="rounded-xl border border-[var(--ci-border)] bg-white/88 p-3 shadow-[var(--ci-shadow-soft)] backdrop-blur-sm">
+    <div className="shrink-0 rounded-xl border border-[var(--ci-border)] bg-white/88 p-3 shadow-[var(--ci-shadow-soft)] backdrop-blur-sm">
       <div className="mb-3 flex items-center gap-3 px-2">
         <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[rgba(79,141,246,0.10)] text-[var(--ci-accent)] ring-1 ring-[rgba(79,141,246,0.18)]">
           <Radar size={16} />
