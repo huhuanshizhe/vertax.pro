@@ -1168,6 +1168,7 @@ model ProspectCompany {
   lastEnrichedAt    DateTime?
   tenant            Tenant    @relation(fields: [tenantId], references: [id])
   outreachArtifacts Json? // 持久化外联方案 { email: { subject, body }, whatsapp: { message }, ... }
+  outreachLanguage  String? // Validated BCP-47 override (vi, th, zh-Hans...). Null = auto-infer from country/TLD.
 
   // 分类与标签
   tier String? // A | B | C

@@ -176,3 +176,98 @@ export function getCountryMatchPriority(
 
   return doesCountryMatchTargets(candidateIso, targets) ? 0 : 2;
 }
+
+// ==================== Outreach Language Inference ====================
+
+const COUNTRY_TO_OUTREACH_LANG: Record<string, string> = {
+  VN: 'vi', TH: 'th', ID: 'id', MY: 'ms', PH: 'fil',
+  JP: 'ja', KR: 'ko', CN: 'zh-Hans', TW: 'zh-Hant', HK: 'zh-Hant',
+  BR: 'pt', PT: 'pt',
+  ES: 'es', MX: 'es', AR: 'es', CO: 'es', CL: 'es', PE: 'es',
+  FR: 'fr', DE: 'de', IT: 'it', NL: 'nl',
+  SA: 'ar', AE: 'ar', EG: 'ar', QA: 'ar', KW: 'ar', MA: 'ar',
+  RU: 'ru', TR: 'tr', PL: 'pl',
+  US: 'en', GB: 'en', AU: 'en', CA: 'en', NZ: 'en', IE: 'en', SG: 'en', IN: 'en',
+};
+
+export const OUTREACH_LANGUAGE_OPTIONS = [
+  { code: 'en', label: 'English' },
+  { code: 'vi', label: 'Tieng Viet' },
+  { code: 'th', label: 'Thai' },
+  { code: 'id', label: 'Bahasa Indonesia' },
+  { code: 'ms', label: 'Bahasa Melayu' },
+  { code: 'fil', label: 'Filipino' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+  { code: 'zh-Hans', label: 'Chinese (Simplified)' },
+  { code: 'zh-Hant', label: 'Chinese (Traditional)' },
+  { code: 'pt', label: 'Portugues' },
+  { code: 'es', label: 'Espanol' },
+  { code: 'fr', label: 'Francais' },
+  { code: 'de', label: 'Deutsch' },
+  { code: 'it', label: 'Italiano' },
+  { code: 'nl', label: 'Nederlands' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'ru', label: 'Russian' },
+  { code: 'tr', label: 'Turkce' },
+  { code: 'pl', label: 'Polski' },
+] as const;
+
+const VALID_LANG_CODES = new Set<string>(OUTREACH_LANGUAGE_OPTIONS.map((o) => o.code));
+
+const TLD_TO_COUNTRY: Record<string, string> = {
+  vn: 'VN', th: 'TH', id: 'ID', my: 'MY', ph: 'PH',
+  jp: 'JP', kr: 'KR', cn: 'CN', tw: 'TW',
+  br: 'BR', pt: 'PT', es: 'ES', mx: 'MX', ar: 'AR',
+  fr: 'FR', de: 'DE', it: 'IT', nl: 'NL',
+  sa: 'SA', ae: 'AE', eg: 'EG', ru: 'RU', tr: 'TR', pl: 'PL',
+};
+
+function inferCountryFromTLD(website: string | null | undefined): string | null {
+  if (!website) return null;
+  try {
+    const hostname = new URL(
+      website.startsWith('http') ? website : `https://${website}`,
+    ).hostname;
+    const tld = hostname.split('.').pop()?.toLowerCase();
+    return tld ? TLD_TO_COUNTRY[tld] ?? null : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Infer outreach language from country (priority) and website TLD (fallback). Always returns a valid code. */
+export function inferOutreachLanguage(opts: {
+  country?: string | null;
+  website?: string | null;
+}): string {
+  const countryCode =
+    normalizeCountryCode(opts.country) || inferCountryFromTLD(opts.website);
+  if (!countryCode) return 'en';
+  return COUNTRY_TO_OUTREACH_LANG[countryCode] || 'en';
+}
+
+/**
+ * Validate a language code against whitelist.
+ * Returns the code if valid, undefined if not.
+ * Does NOT fallback to 'en' so downstream auto-inference can still run.
+ */
+export function getValidOutreachLanguage(lang: unknown): string | undefined {
+  if (typeof lang !== 'string') return undefined;
+  const trimmed = lang.trim();
+  return VALID_LANG_CODES.has(trimmed) ? trimmed : undefined;
+}
+
+/** Get display label for a language code. */
+export function getOutreachLanguageLabel(code: string): string {
+  return (
+    OUTREACH_LANGUAGE_OPTIONS.find((o) => o.code === code)?.label || code
+  );
+}
+
+/** Exported for testing: returns all country-to-language entries for consistency checks. */
+export function getSupportedCountryLanguageEntries(): ReadonlyArray<
+  [string, string]
+> {
+  return Object.entries(COUNTRY_TO_OUTREACH_LANG);
+}

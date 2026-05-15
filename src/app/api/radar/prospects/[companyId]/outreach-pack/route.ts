@@ -8,6 +8,11 @@ import {
   mergeProspectContactsWithSnapshot,
   getProspectCompanyOutreachContactProfile,
 } from '@/lib/radar/prospect-outreach-state';
+import {
+  inferOutreachLanguage,
+  getValidOutreachLanguage,
+  getOutreachLanguageLabel,
+} from '@/lib/radar/country-utils';
 
 export const runtime = 'nodejs';
 export const maxDuration = 120;
@@ -17,7 +22,7 @@ interface RouteContext {
 }
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   context: RouteContext
 ) {
   const session = await auth();
@@ -32,6 +37,15 @@ export async function POST(
   const tenantId = session.user.tenantId;
   const userId = session.user.id;
 
+  // 0. Parse optional request body for language override
+  let requestedLanguage: string | undefined;
+  try {
+    const body = await req.json();
+    requestedLanguage = getValidOutreachLanguage(body?.language);
+  } catch {
+    // No body or invalid JSON is acceptable for batch calls and backward compat.
+  }
+
   // 1. Load ProspectCompany (with tenant boundary check)
   const company = await prisma.prospectCompany.findUnique({
     where: { id: companyId, tenantId },
@@ -42,6 +56,23 @@ export async function POST(
       { ok: false, error: 'Company not found', code: 'NOT_FOUND' },
       { status: 404 }
     );
+  }
+
+  // 1b. Resolve outreach language (request > DB override > auto-infer)
+  const dbLanguage = company.outreachLanguage
+    ? getValidOutreachLanguage(company.outreachLanguage)
+    : undefined;
+
+  const resolvedLanguage = requestedLanguage
+    ?? dbLanguage
+    ?? inferOutreachLanguage({ country: company.country, website: company.website });
+
+  // 1c. Persist manual override if valid and different from stored value
+  if (requestedLanguage && requestedLanguage !== company.outreachLanguage) {
+    await prisma.prospectCompany.update({
+      where: { id: companyId, tenantId },
+      data: { outreachLanguage: requestedLanguage },
+    });
   }
 
   // 2. Load contacts
@@ -114,6 +145,7 @@ export async function POST(
           },
           matchReasons,
           approachAngle: company.approachAngle || null,
+          language: resolvedLanguage,
         },
         entityType: 'OutreachPack',
         entityId: company.id,
@@ -130,11 +162,27 @@ export async function POST(
       );
     }
 
-    // 7. Persist to ProspectCompany.outreachArtifacts
+    // 7. Persist to ProspectCompany.outreachArtifacts (with language metadata)
     const artifactEntry = {
       ...(result.output as Record<string, unknown>),
       timestamp: new Date().toISOString(),
+      language: resolvedLanguage,
+      languageLabel: getOutreachLanguageLabel(resolvedLanguage),
     };
+
+    if (result.versionId) {
+      await prisma.artifactVersion.updateMany({
+        where: {
+          id: result.versionId,
+          tenantId,
+          entityType: 'OutreachPack',
+          entityId: company.id,
+        },
+        data: {
+          content: artifactEntry as object,
+        },
+      });
+    }
 
     await prisma.prospectCompany.update({
       where: { id: companyId, tenantId },
@@ -149,7 +197,8 @@ export async function POST(
     return NextResponse.json({
       ok: true,
       versionId: result.versionId || null,
-      pack: result.output,
+      pack: artifactEntry,
+      language: resolvedLanguage,
     });
   } catch (err) {
     console.error('[outreach-pack] Generation error:', err);

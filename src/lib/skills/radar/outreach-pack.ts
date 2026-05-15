@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { SkillDefinition, PromptContext } from '../types';
 import { formatEvidenceForPrompt, formatCompanyProfileForPrompt } from '../evidence-loader';
 import { SKILL_NAMES } from '../names';
+import { getOutreachLanguageLabel } from '@/lib/radar/country-utils';
 
 // ==================== Input/Output Schemas ====================
 
@@ -14,6 +15,7 @@ const inputSchema = z.object({
   contactProfile: z.record(z.string(), z.unknown()).nullable().optional(),
   matchReasons: z.array(z.string()).optional(),
   approachAngle: z.string().nullable().optional(),
+  language: z.string().optional().describe('Target outreach language code (e.g. "vi", "zh-Hans", "en")'),
 });
 
 const playbookEntrySchema = z.object({
@@ -90,7 +92,17 @@ Use source labels D1-D7 for dossier-backed claims, and C1 for contact execution 
 5. 【关键】邮件 body 和 subject 中禁止出现任何方括号引用标记如 [D1]、[E1]、[C1]、[Your Name] 等。
    所有证据引用仅通过 evidenceIds 数组传递，正文直接使用具体公司名/人名/数据。
 6. 邮件末尾签名统一使用 {{SENDER_SIGNATURE}} 占位符（单独一行），系统会自动替换为发件人真实信息。
-   不要输出 [Your Name]、[Your Position] 等方括号占位符。`,
+   不要输出 [Your Name]、[Your Position] 等方括号占位符。
+
+语言本地化：
+7. 当 input 中提供 language 参数且不为 "en" 时：
+   - 邮件 subject、body 正文段落、greeting、closing：用目标语言撰写
+   - Opening lines 和 WhatsApp 消息：用目标语言
+   - 产品名、品牌名、型号、技术规格参数：保留英文原文
+   - Playbook responseTemplate：用目标语言
+   - 退订/opt-out 句子：同时提供目标语言版本和英文版本
+   - 【重要】仍然遵守第5、6条：正文中不出现 [D1]/[E1]/[Your Name]，签名用 {{SENDER_SIGNATURE}}
+   当 language 为 "en" 或未提供时，全部用英文输出（当前默认行为不变）。`,
   
   buildUserPrompt: (ctx: PromptContext) => {
     const { input, companyProfile, evidences } = ctx;
@@ -151,7 +163,23 @@ Additional requirements:
 3. Respect avoid-topics and risk alerts from D6/D7; mention these boundaries in warnings.
 4. When choosing channel language, use C1 recommended contact, compliance note, and available email/phone/LinkedIn context.
 5. Fill nested evidenceIds with D1-D7/C1 labels when the detail came from dossier/contact context.`;
-    
+
+    const lang = input.language as string | undefined;
+    if (lang && lang !== 'en') {
+      const label = getOutreachLanguageLabel(lang);
+      prompt += `
+
+=== Language Requirement ===
+Output language: ${label} (${lang})
+Rules:
+- Email subject, body, greeting, closing: write in ${label}
+- Opening lines, WhatsApp messages: write in ${label}
+- Product names, brand names, technical terms, model numbers: keep in English
+- Playbook response templates: write in ${label}
+- Opt-out sentence: provide one line in ${label} AND one line in English
+- Do NOT write the entire email in both languages. The main content is in ${label} only, with English terms inline where needed.`;
+    }
+
     return prompt;
   },
 };

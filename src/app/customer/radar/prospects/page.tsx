@@ -87,12 +87,19 @@ import {
   type ProspectOutreachContact,
 } from '@/lib/radar/prospect-outreach-state';
 import { toast } from 'sonner';
+import {
+  inferOutreachLanguage,
+  getValidOutreachLanguage,
+  OUTREACH_LANGUAGE_OPTIONS,
+} from '@/lib/radar/country-utils';
 
 // ==================== 类型 ====================
 
 interface OutreachPackContent {
   timestamp?: string;
   version?: number;
+  language?: string;
+  languageLabel?: string;
   outreachPack: {
     forPersona: string;
     forTier: string;
@@ -350,6 +357,8 @@ function normalizeOutreachPackContent(
       typeof outer.version === 'number'
         ? outer.version
         : options?.version,
+    language: typeof outer.language === 'string' ? outer.language : undefined,
+    languageLabel: typeof outer.languageLabel === 'string' ? outer.languageLabel : undefined,
     outreachPack: {
       forPersona,
       forTier,
@@ -438,6 +447,7 @@ export default function RadarProspectsPage() {
   const [selectedOutreachVersionId, setSelectedOutreachVersionId] = useState<string | null>(null);
   const [outreachVersions, setOutreachVersions] = useState<OutreachPackVersionSummary[]>([]);
   const [outreachTemplates, setOutreachTemplates] = useState<OutreachPackVersionSummary[]>([]);
+  const [outreachLanguage, setOutreachLanguage] = useState<string>('en');
   const [activeTab, setActiveTab] = useState<'info' | 'contacts' | 'outreach' | 'dossier'>('info');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
@@ -1099,6 +1109,8 @@ export default function RadarProspectsPage() {
     try {
       const res = await fetch(`/api/radar/prospects/${company.id}/outreach-pack`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language: outreachLanguage }),
       });
 
       let data: {
@@ -1934,6 +1946,13 @@ export default function RadarProspectsPage() {
                         setDossierData(null);
                         setShowContactForm(false);
                         setOutreachHistory([]);
+                        // 初始化外联语言（DB 覆盖 > 自动推断）
+                        setOutreachLanguage(
+                          isSelected ? 'en' : (
+                            getValidOutreachLanguage(company.outreachLanguage)
+                              || inferOutreachLanguage({ country: company.country, website: company.website })
+                          )
+                        );
                       }}
                     className={`cursor-pointer rounded-lg border p-3 transition-colors ${
                       isSelected 
@@ -2099,6 +2118,20 @@ export default function RadarProspectsPage() {
                     }`}>v{dossierData.version}</span>
                   )}
                 </button>
+              </div>
+
+              {/* 外联语言选择器 (跨 tab 共享) */}
+              <div className="flex items-center gap-2 px-1">
+                <span className="text-[11px] text-slate-400">外联语言</span>
+                <select
+                  value={outreachLanguage}
+                  onChange={(e) => setOutreachLanguage(e.target.value)}
+                  className="px-2 py-1 rounded border border-[var(--ci-border)] text-xs bg-white focus:outline-none focus:border-[var(--ci-accent)]"
+                >
+                  {OUTREACH_LANGUAGE_OPTIONS.map((opt) => (
+                    <option key={opt.code} value={opt.code}>{opt.label}</option>
+                  ))}
+                </select>
               </div>
 
               {activeTab === 'info' && (
@@ -2539,29 +2572,47 @@ export default function RadarProspectsPage() {
                           <div className="bg-[var(--ci-surface-strong)] rounded-xl border border-[var(--ci-border)] p-4">
                             <h4 className="font-bold text-[#0B1B2B]">版本历史</h4>
                             <div className="mt-3 space-y-2 max-h-48 overflow-y-auto pr-1">
-                              {outreachVersions.map((version) => (
-                                <button
-                                  key={version.id}
-                                  onClick={() => handleSelectOutreachVersion(version)}
-                                  className={`w-full text-left rounded-xl border px-3 py-2 transition-colors ${
-                                    selectedOutreachVersionId === version.id
-                                      ? 'border-[var(--ci-accent)] bg-[var(--ci-accent)]/5'
-                                      : 'border-[var(--ci-border)] bg-white hover:border-[var(--ci-accent)]/40'
-                                  }`}
-                                >
-                                  <div className="flex items-center justify-between gap-2">
-                                    <span className="text-xs font-medium text-[#0B1B2B]">
-                                      v{version.version}
-                                    </span>
-                                    <span className="text-[10px] text-slate-400">
-                                      {new Date(version.createdAt).toLocaleDateString()}
-                                    </span>
-                                  </div>
-                                  <p className="text-[11px] text-slate-500 mt-1">
-                                    {version.changeNote || version.createdByName || '已保存版本'}
-                                  </p>
-                                </button>
-                              ))}
+                              {outreachVersions.map((version) => {
+                                const versionLanguage =
+                                  typeof version.content?.language === 'string'
+                                    ? version.content.language
+                                    : null;
+                                const versionLanguageLabel =
+                                  typeof version.content?.languageLabel === 'string'
+                                    ? version.content.languageLabel
+                                    : versionLanguage;
+
+                                return (
+                                  <button
+                                    key={version.id}
+                                    onClick={() => handleSelectOutreachVersion(version)}
+                                    className={`w-full text-left rounded-xl border px-3 py-2 transition-colors ${
+                                      selectedOutreachVersionId === version.id
+                                        ? 'border-[var(--ci-accent)] bg-[var(--ci-accent)]/5'
+                                        : 'border-[var(--ci-border)] bg-white hover:border-[var(--ci-accent)]/40'
+                                    }`}
+                                  >
+                                    <div className="flex items-center justify-between gap-2">
+                                      <div className="flex items-center gap-2">
+                                        <span className="text-xs font-medium text-[#0B1B2B]">
+                                          v{version.version}
+                                        </span>
+                                        {versionLanguage && versionLanguage !== 'en' && (
+                                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">
+                                            {versionLanguageLabel}
+                                          </span>
+                                        )}
+                                      </div>
+                                      <span className="text-[10px] text-slate-400">
+                                        {new Date(version.createdAt).toLocaleDateString()}
+                                      </span>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 mt-1">
+                                      {version.changeNote || version.createdByName || '已保存版本'}
+                                    </p>
+                                  </button>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
