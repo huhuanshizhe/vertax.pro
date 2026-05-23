@@ -6,7 +6,7 @@ import { shouldIgnoreStaticAuthOrigin } from "@/lib/app-origin";
 // AUTH_SECRET is the canonical variable; JWT_SECRET is accepted as a backward-compatible alias.
 export const CROSS_PLATFORM_JWT_CONFIG = {
   secret: process.env.AUTH_SECRET || process.env.JWT_SECRET,
-  issuer: "vertax.top",
+  issuer: "vertax.pro",
   audience: "vertax-platform",
 };
 

@@ -29,7 +29,7 @@ const CUSTOMERS = [
     adminEmail: 'admin@tdpaint.com',
     adminName: '涂豆管理员',
     adminPassword: 'Tdpaint2026!',
-    accessUrl: 'https://tdpaint.vertax.top',
+    accessUrl: 'https://tdpaint.vertax.pro',
   },
   {
     slug: 'machrio',
@@ -37,7 +37,7 @@ const CUSTOMERS = [
     adminEmail: 'admin@machrio.com',
     adminName: 'MachRio 管理员',
     adminPassword: 'Machrio2026!',
-    accessUrl: 'https://machrio.vertax.top',
+    accessUrl: 'https://machrio.vertax.pro',
   },
 ];
 

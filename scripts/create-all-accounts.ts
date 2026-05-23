@@ -20,7 +20,7 @@ async function main() {
       name: '涂豆科技',
       email: 'admin@tdpaint.com',
       password: 'Tdpaint2026!',
-      url: 'https://tdpaint.vertax.top',
+      url: 'https://tdpaint.vertax.pro',
       roleName: '企业管理员',
     },
     {
@@ -29,7 +29,7 @@ async function main() {
       name: 'MachRio',
       email: 'admin@machrio.com',
       password: 'Machrio2026!',
-      url: 'https://machrio.vertax.top',
+      url: 'https://machrio.vertax.pro',
       roleName: '企业管理员',
     },
     // 运营后台账号
@@ -37,9 +37,9 @@ async function main() {
       type: 'tower',
       slug: 'tower',
       name: 'VertaX 运营团队',
-      email: 'admin@vertax.top',
+      email: 'admin@vertax.pro',
       password: 'Vertax2026!',
-      url: 'https://tower.vertax.top',
+      url: 'https://tower.vertax.pro',
       roleName: 'platform_admin',
     },
   ];
@@ -71,7 +71,7 @@ async function main() {
             `INSERT INTO "Tenant" (id, name, slug, domain, plan, status, settings, "createdAt", "updatedAt") 
              VALUES (gen_random_uuid(), $1, $2, $3, 'pro', 'active', '{}', $4, $4) 
              RETURNING id`,
-            [account.name, account.slug, `${account.slug}.vertax.top`, now]
+            [account.name, account.slug, `${account.slug}.vertax.pro`, now]
           );
           tenantId = tenantResult.rows[0].id;
           console.log(`✅ 租户创建成功：${tenantId}`);
@@ -153,7 +153,7 @@ async function main() {
   console.log('═'.repeat(60));
   console.log('\n📋 账号汇总：');
   console.log('\n【涂豆科技】');
-  console.log('  网址：https://tdpaint.vertax.top');
+  console.log('  网址：https://tdpaint.vertax.pro');
   console.log('  邮箱：admin@tdpaint.com');
   console.log('  密码：Tdpaint2026!');
   console.log('\n【MachRio】');

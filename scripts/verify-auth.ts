@@ -84,7 +84,7 @@ async function main() {
     console.log('\n⚙️  环境变量:');
     console.log(`   DATABASE_URL: ${process.env.DATABASE_URL ? '✅ 已配置' : '❌ 未配置'}`);
     console.log(`   JWT_SECRET: ${process.env.JWT_SECRET ? '✅ 已配置' : '❌ 未配置'}`);
-    console.log(`   NEXT_PUBLIC_BASE_DOMAIN: ${process.env.NEXT_PUBLIC_BASE_DOMAIN || 'vertax.top'}`);
+    console.log(`   NEXT_PUBLIC_BASE_DOMAIN: ${process.env.NEXT_PUBLIC_BASE_DOMAIN || 'vertax.pro'}`);
     
     console.log('\n✅ 验证完成！');
     

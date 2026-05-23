@@ -23,16 +23,16 @@ describe("app origin resolution", () => {
   });
 
   it("prefers the active tenant request host over a configured tenant origin", () => {
-    process.env.NEXT_PUBLIC_APP_URL = "https://tdpaint.vertax.top";
+    process.env.NEXT_PUBLIC_APP_URL = "https://tdpaint.vertax.pro";
 
-    expect(resolveAppOrigin("https://machrio.vertax.top/customer/home")).toBe(
-      "https://machrio.vertax.top",
+    expect(resolveAppOrigin("https://machrio.vertax.pro/customer/home")).toBe(
+      "https://machrio.vertax.pro",
     );
   });
 
   it("ignores static auth origins that would freeze Auth.js to one Vertax host", () => {
-    expect(shouldIgnoreStaticAuthOrigin("https://tdpaint.vertax.top")).toBe(true);
-    expect(shouldIgnoreStaticAuthOrigin("https://vertax.top")).toBe(true);
+    expect(shouldIgnoreStaticAuthOrigin("https://tdpaint.vertax.pro")).toBe(true);
+    expect(shouldIgnoreStaticAuthOrigin("https://vertax.pro")).toBe(true);
     expect(shouldIgnoreStaticAuthOrigin("http://localhost:3000")).toBe(true);
   });
 

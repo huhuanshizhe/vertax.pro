@@ -1,8 +1,8 @@
 /**
  * Tenant/View Resolver based on domain
  * 
- * - tower.vertax.top → Operations view (运营后台)
- * - *.vertax.top → Customer view (客户界面)
+ * - tower.vertax.pro → Operations view (运营后台)
+ * - *.vertax.pro → Customer view (客户界面)
  * - localhost → Based on NEXT_PUBLIC_VIEW_MODE env
  */
 
@@ -14,8 +14,8 @@ export interface TenantInfo {
   domain: string;
 }
 
-const TOWER_DOMAINS = ['tower.vertax.top', 'tower.vertax.cn'];
-const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'vertax.top';
+const TOWER_DOMAINS = ['tower.vertax.pro', 'tower.vertax.cn'];
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || 'vertax.pro';
 
 /**
  * Normalize a hostname by trimming whitespace, lowercasing it, and stripping
@@ -66,7 +66,7 @@ export function resolveTenant(hostname: string): TenantInfo {
     };
   }
   
-  // Check if it's a customer subdomain (e.g., tdpaint.vertax.top)
+  // Check if it's a customer subdomain (e.g., tdpaint.vertax.pro)
   if (domain.endsWith(`.${BASE_DOMAIN}`)) {
     const tenantSlug = domain.replace(`.${BASE_DOMAIN}`, '');
     return {

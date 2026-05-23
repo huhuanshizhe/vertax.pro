@@ -17,12 +17,12 @@ async function main() {
     {
       slug: 'tdpaint',
       name: '涂豆科技',
-      domain: 'tdpaint.vertax.top',
+      domain: 'tdpaint.vertax.pro',
     },
     {
       slug: 'machrio',
       name: 'MachRio',
-      domain: 'machrio.vertax.top',
+      domain: 'machrio.vertax.pro',
     },
   ];
 

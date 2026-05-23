@@ -4,7 +4,7 @@ import {
   normalizeHostname,
 } from "@/lib/tenant-resolver";
 
-const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || "vertax.top";
+const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || "vertax.pro";
 
 function parseOrigin(value: string | null | undefined): string | null {
   if (!value) {

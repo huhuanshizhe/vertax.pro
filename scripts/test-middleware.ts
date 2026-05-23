@@ -33,10 +33,10 @@ async function testDomain(domain: string) {
 async function main() {
   console.log('🚀 Testing Middleware Behavior\n');
   
-  await testDomain('vertax.top');
-  await testDomain('tdpaint.vertax.top');
-  await testDomain('machrio.vertax.top');
-  await testDomain('tower.vertax.top');
+  await testDomain('vertax.pro');
+  await testDomain('tdpaint.vertax.pro');
+  await testDomain('machrio.vertax.pro');
+  await testDomain('tower.vertax.pro');
   
   console.log('\n✅ Test completed!');
 }

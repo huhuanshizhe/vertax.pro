@@ -172,7 +172,7 @@ async function main() {
   console.log('租户ID:', tenant.id);
   console.log('管理员邮箱: admin@machrio.com');
   console.log('管理员密码: machrio2024');
-  console.log('登录地址: https://machrio.vertax.top');
+  console.log('登录地址: https://machrio.vertax.pro');
   console.log('========================================');
 }
 

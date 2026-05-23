@@ -283,7 +283,7 @@ function addEmailTracking(
     emailId?: string;
   }
 ): string {
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vertax.top';
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://vertax.pro';
 
   // 1. 构建追踪像素URL
   const trackingPixelUrl = tracking?.tenantId

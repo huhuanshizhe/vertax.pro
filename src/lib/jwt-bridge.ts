@@ -16,7 +16,7 @@ if (!_secret) {
   throw new Error("Missing AUTH_SECRET (or JWT_SECRET) environment variable – cannot sign/verify JWTs.");
 }
 const JWT_SECRET: string = _secret;
-const JWT_ISSUER = "vertax.top";
+const JWT_ISSUER = "vertax.pro";
 const JWT_AUDIENCE = "vertax-platform";
 
 // Token expiry durations
@@ -151,12 +151,12 @@ export function decodeCrossPlatformJWT(token: string): CrossPlatformJWTPayload |
  * Extract tenant slug from subdomain
  * 
  * @param hostname - The full hostname (e.g., "tdpaint.vertax.top")
- * @param baseDomain - The base domain (e.g., "vertax.top")
+ * @param baseDomain - The base domain (e.g., "vertax.pro")
  * @returns The tenant slug or null if not a subdomain
  */
 export function extractTenantSlugFromSubdomain(
   hostname: string,
-  baseDomain: string = "vertax.top"
+  baseDomain: string = "vertax.pro"
 ): string | null {
   // Handle localhost for development
   if (hostname === "localhost" || hostname.startsWith("127.0.0.1")) {
@@ -191,7 +191,7 @@ export function extractTenantSlugFromSubdomain(
  * Generate a login redirect URL for cross-domain authentication
  * 
  * @param targetUrl - The URL the user was trying to access
- * @param towerBaseUrl - The base URL of Tower (e.g., "https://tower.vertax.top")
+ * @param towerBaseUrl - The base URL of Tower (e.g., "https://tower.vertax.pro")
  * @returns The full login URL with redirect parameter
  */
 export function generateLoginRedirectUrl(

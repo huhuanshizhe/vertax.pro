@@ -18,14 +18,14 @@ async function main() {
       name: '涂豆科技',
       email: 'admin@tdpaint.com',
       password: 'Tdpaint2026!',
-      url: 'https://tdpaint.vertax.top',
+      url: 'https://tdpaint.vertax.pro',
     },
     {
       slug: 'machrio',
       name: 'MachRio',
       email: 'admin@machrio.com',
       password: 'Machrio2026!',
-      url: 'https://machrio.vertax.top',
+      url: 'https://machrio.vertax.pro',
     },
   ];
 
