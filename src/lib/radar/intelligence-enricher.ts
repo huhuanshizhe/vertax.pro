@@ -103,7 +103,7 @@ type DecisionMakerContact = {
 
 // ==================== 搜索工具封装 ====================
 
-interface SearchResult {
+export interface SearchResult {
   title?: string;
   url?: string;
   publishedDate?: string;
@@ -151,7 +151,7 @@ interface GooglePlacesIdentityEnrichment {
 /**
  * 统一搜索封装：优先使用 Exa，若失败或无结果则尝试 Tavily
  */
-async function unifiedSearch(
+export async function unifiedSearch(
   query: string, 
   type: 'news' | 'auto' = 'auto', 
   numResults: number = 10,
@@ -277,7 +277,7 @@ async function tavilySearch(
 /**
  * 使用 Hunter.io 查找个人邮箱
  */
-async function hunterFindEmail(domain: string, fullName: string): Promise<{ email: string | null; confidence: number }> {
+export async function hunterFindEmail(domain: string, fullName: string): Promise<{ email: string | null; confidence: number }> {
   try {
     const apiKey = process.env.HUNTER_API_KEY;
     if (!apiKey || !domain) return { email: null, confidence: 0 };
@@ -307,7 +307,7 @@ async function hunterFindEmail(domain: string, fullName: string): Promise<{ emai
   }
 }
 
-function normalizeCompanyDomain(domainOrUrl: string | undefined): string | null {
+export function normalizeCompanyDomain(domainOrUrl: string | undefined): string | null {
   if (!domainOrUrl) return null;
 
   try {
