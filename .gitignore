@@ -48,11 +48,6 @@ yarn-error.log*
 .env.*
 !.env.example
 
-# ----- Cookies / credentials -----
-cookie.txt
-cookie*.txt
-cookies.txt
-
 # ----- Vercel -----
 .vercel
 .vercel-tmp/
@@ -164,11 +159,9 @@ category_redirects.json
 product_redirects_from_404.json
 generated_product_redirects.json
 test-*.js
-tmp-*.js
+tmp-*
+*.py
 radar-demo.html
 nul
 
 .vercel
-pnpm-lock.yaml
-package-lock.json
-pnpm-workspace.yaml

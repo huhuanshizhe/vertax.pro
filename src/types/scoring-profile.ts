@@ -50,16 +50,12 @@ export interface ChannelScoring {
 
   // 企业发现
   google_places: number;   // Google Maps POI
-  brave_search: number;    // 搜索发现
-
-  // 高意向信号
-  hiring_signal: number;   // 招聘信号（公司增长）
-  trade_data: number;      // 贸易数据（已购买相关产品）
-  trade_show: number;      // 展会参展（有市场预算）
+  ai_search: number;       // AI 搜索发现
+  apollo_org_search: number; // Apollo B2B数据库
 
   // 其他
-  ai_search: number;       // AI 搜索发现
   directory: number;       // 目录/黄页
+  hunter: number;          // Hunter.io 邮箱查找
 }
 
 /**
@@ -243,18 +239,14 @@ export const DEFAULT_SCORING_PROFILE: ScoringProfile = {
     ted: 5,              // 欧盟招标
     sam_gov: 6,          // 美国政府采购
 
-    // 企业发现 - 中等优先级
+    // 企业发现
     google_places: 2,    // Google Maps POI
-    brave_search: 2,     // 搜索发现
-
-    // 高意向信号 - 高优先级
-    hiring_signal: 4,    // 招聘信号（公司增长=潜在需求）
-    trade_data: 8,       // 贸易数据（已购买相关产品=最高意向）
-    trade_show: 5,       // 展会参展（有市场预算=主动拓展）
+    ai_search: 2,        // AI 搜索发现
+    apollo_org_search: 3, // Apollo B2B数据库（结构化数据，质量较高）
 
     // 其他
-    ai_search: 2,        // AI 搜索发现
     directory: 1,        // 目录/黄页
+    hunter: 1,           // Hunter.io 邮箱查找
   },
 
   thresholds: {

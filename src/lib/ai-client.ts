@@ -16,8 +16,44 @@ import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const DASHSCOPE_BASE_URL =
+const DEFAULT_DASHSCOPE_BASE_URL =
   "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+const DEFAULT_CODING_DASHSCOPE_BASE_URL =
+  "https://coding.dashscope.aliyuncs.com/v1/chat/completions";
+const CODING_DASHSCOPE_HOST = "coding.dashscope.aliyuncs.com";
+const DEFAULT_CODING_MODEL = "qwen3-coder-plus";
+
+function getDashScopeBaseUrl(apiKey?: string): string {
+  const configuredBaseUrl = process.env.DASHSCOPE_BASE_URL?.trim();
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+
+  if (apiKey?.startsWith("sk-sp-")) {
+    return DEFAULT_CODING_DASHSCOPE_BASE_URL;
+  }
+
+  return DEFAULT_DASHSCOPE_BASE_URL;
+}
+
+function resolveModel(requestedModel?: string, apiKey?: string): string {
+  const baseUrl = getDashScopeBaseUrl(apiKey);
+  const trimmedModel = requestedModel?.trim();
+
+  if (baseUrl.includes(CODING_DASHSCOPE_HOST)) {
+    const codingModel = process.env.DASHSCOPE_MODEL?.trim() || DEFAULT_CODING_MODEL;
+
+    if (trimmedModel && trimmedModel !== codingModel) {
+      console.warn(
+        `[chatCompletion] remapping model ${trimmedModel} -> ${codingModel} for coding endpoint`
+      );
+    }
+
+    return codingModel;
+  }
+
+  return trimmedModel || "qwen-plus";
+}
 
 interface ChatMessage {
   role: "system" | "user" | "assistant";
@@ -136,13 +172,14 @@ async function chatCompletionViaFetch(
   messages: ChatMessage[],
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResponse> {
+  const baseUrl = getDashScopeBaseUrl(apiKey);
   const {
-    model = "qwen-plus",
     temperature = 0.3,
     maxTokens = 4096,
     topP = 0.8,
     timeout = 300,
   } = options;
+  const model = resolveModel(options.model, apiKey);
 
   const ts = Date.now();
   console.log(`[chatCompletion] fetch (non-stream), model=${model}, maxTokens=${maxTokens}`);
@@ -151,7 +188,7 @@ async function chatCompletionViaFetch(
   const timer = setTimeout(() => controller.abort(), timeout * 1000);
 
   try {
-    const response = await fetch(DASHSCOPE_BASE_URL, {
+    const response = await fetch(baseUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -216,13 +253,14 @@ async function chatCompletionViaCurl(
   messages: ChatMessage[],
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResponse> {
+  const baseUrl = getDashScopeBaseUrl(apiKey);
   const {
-    model = "qwen-plus",
     temperature = 0.3,
     maxTokens = 4096,
     topP = 0.8,
     timeout = 300,
   } = options;
+  const model = resolveModel(options.model, apiKey);
 
   const requestBody = JSON.stringify({
     model,
@@ -246,7 +284,7 @@ async function chatCompletionViaCurl(
       "-s", "-S",
       "--max-time", String(timeout),
       "-X", "POST",
-      DASHSCOPE_BASE_URL,
+      baseUrl,
       "-H", "Content-Type: application/json",
       "-H", `Authorization: Bearer ${apiKey}`,
       "--data-binary", `@${tmpFile}`,
@@ -577,13 +615,14 @@ export function createStreamingResponse(
     });
   }
 
+  const baseUrl = getDashScopeBaseUrl(apiKey);
   const {
-    model = "qwen-plus",
     temperature = 0.3,
     maxTokens = 4096,
     topP = 0.8,
     timeout = 300,
   } = options;
+  const model = resolveModel(options.model, apiKey);
 
   // 构建实时流
   const stream = new ReadableStream({
@@ -621,7 +660,7 @@ export function createStreamingResponse(
         "-N",  // --no-buffer: 禁用缓冲，实时输出
         "--max-time", String(timeout),
         "-X", "POST",
-        DASHSCOPE_BASE_URL,
+        baseUrl,
         "-H", "Content-Type: application/json",
         "-H", `Authorization: Bearer ${apiKey}`,
         "--data-binary", `@${tmpFile}`,

@@ -20,7 +20,7 @@ const responseSignals = [
   },
   {
     label: 'Preparation',
-    value: '按行业准备演示',
+    value: '按行业准备诊断',
     detail: '会结合目标市场和业务场景做定向准备。',
   },
   {
@@ -32,6 +32,8 @@ const responseSignals = [
 
 export default function ContactPage() {
   const [submitted, setSubmitted] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   const [formData, setFormData] = useState({
     name: '',
     company: '',
@@ -42,9 +44,43 @@ export default function ContactPage() {
     message: '',
   });
 
-  const handleSubmit = (event: React.FormEvent) => {
+  const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    setSubmitted(true);
+    setLoading(true);
+    setError('');
+
+    const messageSections = [
+      formData.industry ? `所属行业：${formData.industry}` : null,
+      formData.teamSize ? `团队规模：${formData.teamSize}` : null,
+      formData.message ? `核心问题：${formData.message}` : null,
+    ].filter(Boolean);
+
+    try {
+      const response = await fetch('/api/inquiry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: formData.name,
+          company: formData.company,
+          email: formData.email,
+          phone: formData.phone,
+          message: messageSections.join('\n'),
+        }),
+      });
+
+      if (!response.ok) {
+        const result = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(result?.error || '提交失败，请稍后重试');
+      }
+
+      setSubmitted(true);
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : '提交失败，请稍后重试');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleChange = (
@@ -60,10 +96,10 @@ export default function ContactPage() {
         <div className="mx-auto max-w-4xl text-center">
           <GoldBadge icon={<Sparkles className="h-3.5 w-3.5" />}>Contact VertaX</GoldBadge>
           <h1 className="mt-6 text-4xl font-bold leading-tight text-white sm:text-5xl">
-            预约演示，直接讨论你们的出海增长系统
+            预约增长诊断，先判断你们该从哪条闭环启动
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-base leading-8 text-slate-300 sm:text-lg">
-            我们会围绕你们的目标市场、当前流程和组织能力，给出更贴合业务的系统建议，而不是一套标准话术。
+            我们会围绕你们的目标市场、当前流程和组织能力，判断是先补市场表达、内容节奏，还是先打通主动获客闭环。
           </p>
         </div>
 
@@ -78,10 +114,10 @@ export default function ContactPage() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em]" style={{ color: colors.brand.primary }}>
-                  Request demo
+                  Growth diagnosis
                 </p>
                 <h2 className="mt-3 text-2xl font-bold" style={{ color: colors.text.primary }}>
-                  留下信息，我们来准备一次更像样的演示
+                  留下信息，我们来准备一次更像样的诊断
                 </h2>
               </div>
               <div
@@ -108,7 +144,7 @@ export default function ContactPage() {
                   已收到你的预约信息
                 </h3>
                 <p className="mx-auto mt-3 max-w-xl text-sm leading-7" style={{ color: colors.text.secondary }}>
-                  我们会在 1 个工作日内联系你，并根据你填写的信息提前准备行业路径样板和演示重点。
+                  我们会在 1 个工作日内联系你，并根据你填写的信息提前准备行业路径样板、诊断重点和建议启动顺序。
                 </p>
                 <button
                   className="mt-5 text-sm font-medium"
@@ -121,6 +157,19 @@ export default function ContactPage() {
               </div>
             ) : (
               <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
+                {error ? (
+                  <div
+                    className="rounded-[20px] border px-4 py-3 text-sm"
+                    style={{
+                      background: 'rgba(239, 68, 68, 0.08)',
+                      borderColor: 'rgba(239, 68, 68, 0.2)',
+                      color: colors.data.negative,
+                    }}
+                  >
+                    {error}
+                  </div>
+                ) : null}
+
                 <div className="grid gap-4 md:grid-cols-2">
                   <Field
                     label="姓名"
@@ -196,10 +245,10 @@ export default function ContactPage() {
                 </div>
 
                 <GoldButton className="w-full" icon={<Send className="h-4 w-4" />} size="large" type="submit">
-                  提交预约
+                  {loading ? '提交中...' : '提交预约'}
                 </GoldButton>
                 <p className="text-xs leading-6" style={{ color: colors.text.muted }}>
-                  提交即表示你同意我们基于上述信息安排沟通与演示，我们不会将你的信息用于无关用途。
+                  提交即表示你同意我们基于上述信息安排沟通与诊断，我们不会将你的信息用于无关用途。
                 </p>
               </form>
             )}
@@ -214,7 +263,7 @@ export default function ContactPage() {
                 {[
                   '结合你们行业的 GTM 路径样板',
                   '一份更贴近当前阶段的产品与组织建议',
-                  '关于部署方式、节奏与合作范围的直接判断',
+                  '关于启动顺序、部署方式与合作范围的直接判断',
                 ].map((item) => (
                   <div className="flex items-start gap-2 text-sm leading-7" key={item} style={{ color: colors.text.secondary }}>
                     <CheckCircle2 className="mt-1 h-4 w-4 shrink-0" style={{ color: colors.data.positive }} />
@@ -246,7 +295,7 @@ export default function ContactPage() {
                 如果你们还在评估阶段
               </h3>
               <p className="mt-3 text-sm leading-7" style={{ color: colors.text.secondary }}>
-                也可以先从功能页和合作方式开始看。把方向想清楚之后，我们再进入更具体的演示和实施讨论。
+                也可以先从功能页和合作方式开始看。把方向想清楚之后，我们再进入更具体的诊断和实施讨论。
               </p>
               <div className="mt-5 flex flex-col gap-3 sm:flex-row">
                 <OutlineButton dark={false} href="/features">

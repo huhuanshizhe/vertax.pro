@@ -1349,8 +1349,14 @@ model RadarSearchProfile {
   personaId String? // 关联 Persona
 
   // 搜索配置
-  keywords         Json  @default("{}") // { en: [], zh: [], es: [], ar: [] }
+  keywords         Json  @default("{}") // [DEPRECATED] 旧关键词数据，新逻辑使用 seedKeywords + keywordPool
   negativeKeywords Json? // 排除词
+
+  // === AI 驱动搜索策略（飞轮模型）===
+  seedKeywords   Json? // 用户手动填的初始关键词 [{keyword, language}]
+  keywordPool    Json? // AI 扩展的关键词池 KeywordPoolItem[]
+  searchLog      Json? // 搜索记录（去重用）SearchLogItem[]
+  feedbackLog    Json? // A/B级反馈记录
 
   // 目标区域
   targetCountries String[]

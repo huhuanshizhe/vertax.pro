@@ -177,61 +177,100 @@ export class SAMGovAdapter implements RadarAdapter {
   }
 
   /**
-   * 网页抓取备选方案（无需API Key）
+   * 网页搜索备选方案（使用 Brave Search API 直接调用）
    */
   private async searchViaWebScrape(query: RadarSearchQuery): Promise<RadarSearchResult> {
     const startTime = Date.now();
+    const apiKey = process.env.BRAVE_SEARCH_API_KEY;
+
+    if (!apiKey) {
+      return {
+        items: [],
+        total: 0,
+        hasMore: false,
+        metadata: {
+          source: this.sourceCode,
+          query,
+          fetchedAt: new Date(),
+          duration: Date.now() - startTime,
+        },
+        isExhausted: true,
+      };
+    }
 
     try {
-      // 使用Brave Search + AI解析SAM.gov搜索结果
-      const { BraveSearchAdapter } = await import('./brave-search');
-      const braveAdapter = new BraveSearchAdapter({} as never);
-
       // 构建针对性的搜索查询
       const keywords = query.keywords?.join(' ') || '';
       const naicsDesc = query.targetIndustries?.[0] || '';
+      const searchQuery = [
+        keywords,
+        naicsDesc,
+        'site:sam.gov',
+        'opportunity',
+        'solicitation',
+      ].filter(Boolean).join(' ');
 
-      const searchQuery: RadarSearchQuery = {
-        keywords: [
-          keywords,
-          naicsDesc,
-          'site:sam.gov',
-          'opportunity',
-          'solicitation',
-        ].filter(Boolean),
-        countries: ['US'],
-        cursor: query.cursor,
-      };
+      const params = new URLSearchParams({
+        q: searchQuery,
+        count: '20',
+        country: 'US',
+      });
 
-      const braveResult = await braveAdapter.search(searchQuery);
+      const response = await fetch(
+        `https://api.search.brave.com/res/v1/web/search?${params}`,
+        {
+          headers: {
+            'Accept': 'application/json',
+            'Accept-Encoding': 'gzip',
+            'X-Subscription-Token': apiKey,
+          },
+          signal: AbortSignal.timeout(this.timeout || 30000),
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error(`Brave Search error: ${response.status}`);
+      }
+
+      const data = await response.json() as { web?: { results?: Array<{ title: string; description: string; url: string }> } };
+      const results = data.web?.results || [];
 
       // 过滤只保留SAM.gov的结果
-      const samItems = braveResult.items.filter(
-        item => item.sourceUrl?.includes('sam.gov')
-      ).map(item => ({
-        ...item,
-        sourceUrl: item.sourceUrl,
-        // 重新标记来源
-        matchExplain: {
-          ...item.matchExplain as object,
-          channel: 'sam_gov',
-        },
-      }));
+      const samItems = results
+        .filter(r => r.url.includes('sam.gov'))
+        .map((r, idx) => ({
+          externalId: `sam_web_${Date.now()}_${idx}`,
+          sourceUrl: r.url,
+          displayName: r.title,
+          candidateType: 'OPPORTUNITY' as const,
+          description: r.description,
+          buyerCountry: 'US',
+          buyerType: 'government' as const,
+          matchExplain: {
+            channel: 'sam_gov',
+            query: searchQuery,
+            reasons: ['Brave Search 网页搜索发现'],
+          },
+          rawData: {
+            source: 'sam_gov_web',
+            title: r.title,
+            description: r.description,
+          },
+        }));
 
       const duration = Date.now() - startTime;
 
       return {
         items: samItems,
         total: samItems.length,
-        hasMore: braveResult.hasMore,
-        nextCursor: braveResult.nextCursor,
+        hasMore: false,
         metadata: {
           source: this.sourceCode,
           query,
           fetchedAt: new Date(),
           duration,
         },
-        isExhausted: braveResult.isExhausted,
+        isExhausted: true,
       };
     } catch (error) {
       console.error('[SAM.gov] Web scrape error:', error);

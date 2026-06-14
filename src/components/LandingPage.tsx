@@ -125,8 +125,8 @@ export default function LandingPage() {
               AI-native 工作界面。
             </p>
             <div className="mt-9 flex flex-col items-center justify-center gap-3 sm:flex-row">
-              <GoldButton href="/contact" icon={<ArrowRight className="h-4 w-4" />} size="large">
-                预约演示
+              <GoldButton href="/register" icon={<ArrowRight className="h-4 w-4" />} size="large">
+                预约增长诊断
               </GoldButton>
               <OutlineButton dark href="/features">
                 查看产品能力
@@ -423,8 +423,8 @@ export default function LandingPage() {
             我们就不再把页面做成传统企业展示站，而是把它做成一个能让董事会和执行团队都感到“这套东西真的在工作”的产品界面。
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
-            <GoldButton href="/contact" icon={<ArrowRight className="h-4 w-4" />} size="large">
-              预约演示
+            <GoldButton href="/register" icon={<ArrowRight className="h-4 w-4" />} size="large">
+              预约增长诊断
             </GoldButton>
             <OutlineButton dark={false} href="/pricing">
               查看合作方式

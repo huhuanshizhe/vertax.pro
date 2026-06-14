@@ -128,15 +128,6 @@ export async function enrichCompany(
       }
     }
 
-    // 第3层：People Data Labs（联系人丰富化）
-    if (usePaidSources && findContacts && totalCost < maxCost) {
-      const pdlResult = await enrichFromPDL(domain);
-      if (pdlResult.success) {
-        mergeEnrichment(result, pdlResult);
-        totalCost += pdlResult.cost;
-      }
-    }
-
     // 查找联系人（Apollo 备选）
     if (findContacts && result.data.apolloId && !result.data.contacts) {
       const contacts = await getContactsFromApollo(result.data.apolloId as string);
@@ -465,67 +456,6 @@ async function enrichFromHunter(domain: string): Promise<EnrichmentResult> {
     }
   } catch (error) {
     console.error('[Enrichment] Hunter error:', error);
-  }
-
-  return result;
-}
-
-/**
- * People Data Labs 数据源（联系人丰富化）
- */
-async function enrichFromPDL(domain: string): Promise<EnrichmentResult> {
-  const result: EnrichmentResult = {
-    success: false,
-    data: {},
-    sources: [],
-    cost: 0,
-  };
-
-  try {
-    const { PeopleDataLabsAdapter } = await import('@/lib/radar/adapters/pdl');
-    const adapter = new PeopleDataLabsAdapter({});
-
-    // 搜索该公司的员工
-    const contacts = await adapter.searchByCompany(domain, {
-      limit: 10,
-    });
-
-    if (contacts && contacts.length > 0) {
-      // 按职位排序，优先决策者
-      const sortedContacts = contacts.sort((a, b) => {
-        const seniorityOrder = ['ceo', 'cto', 'cfo', 'vp', 'director', 'manager'];
-        const aTitle = (a.contactRole || '').toLowerCase();
-        const bTitle = (b.contactRole || '').toLowerCase();
-        
-        const aScore = seniorityOrder.findIndex(s => aTitle.includes(s));
-        const bScore = seniorityOrder.findIndex(s => bTitle.includes(s));
-        
-        return (aScore === -1 ? 99 : aScore) - (bScore === -1 ? 99 : bScore);
-      });
-
-      result.data.contacts = sortedContacts.slice(0, 5).map(c => ({
-        email: c.email,
-        name: c.displayName,
-        title: c.contactRole,
-        phone: c.phone,
-        linkedin: c.rawData?.linkedin_url,
-      }));
-
-      // 使用第一个联系人的信息补充
-      const firstContact = sortedContacts[0];
-      if (firstContact.email && !result.data.email) {
-        result.data.email = firstContact.email;
-      }
-      if (firstContact.industry && !result.data.industry) {
-        result.data.industry = firstContact.industry;
-      }
-
-      result.sources.push('People Data Labs');
-      result.success = true;
-      result.cost = 0.05;
-    }
-  } catch (error) {
-    console.error('[Enrichment] PDL error:', error);
   }
 
   return result;

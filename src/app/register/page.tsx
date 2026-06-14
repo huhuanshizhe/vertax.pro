@@ -10,7 +10,38 @@ import {
   ArrowLeft,
   Mail,
   MessageSquare,
+  Building2,
+  Clock3,
+  Compass,
+  Target,
 } from "lucide-react";
+
+const fitSignals = [
+  "适合制造业、工业品、设备与技术服务型出海企业",
+  "适合已经在做独立站、展会、外贸销售，但增长动作仍然分散的团队",
+  "我们先判断最小增长闭环，再讨论是否进入正式实施",
+];
+
+const processSignals = [
+  {
+    icon: Clock3,
+    label: "响应节奏",
+    value: "1 个工作日内",
+    detail: "收到信息后安排首次沟通。",
+  },
+  {
+    icon: Compass,
+    label: "诊断方式",
+    value: "先看问题，再谈方案",
+    detail: "不先卖账号，先判断你们应该先搭哪条增长闭环。",
+  },
+  {
+    icon: Target,
+    label: "输出结果",
+    value: "带走一版启动建议",
+    detail: "包括优先模块、实施顺序和近期可验证动作。",
+  },
+];
 
 export default function InquiryPage() {
   const [submitted, setSubmitted] = useState(false);
@@ -28,7 +59,22 @@ export default function InquiryPage() {
       company: formData.get("company") as string,
       email: formData.get("email") as string,
       phone: formData.get("phone") as string,
-      message: formData.get("message") as string,
+      message: [
+        formData.get("industry")
+          ? `所属行业：${formData.get("industry") as string}`
+          : null,
+        formData.get("market")
+          ? `目标市场：${formData.get("market") as string}`
+          : null,
+        formData.get("priority")
+          ? `当前优先问题：${formData.get("priority") as string}`
+          : null,
+        formData.get("message")
+          ? `补充说明：${formData.get("message") as string}`
+          : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
     };
 
     try {
@@ -107,27 +153,22 @@ export default function InquiryPage() {
               className="text-4xl font-bold leading-tight"
               style={{ color: "#ffffff" }}
             >
-              为出海企业
+              先把你们的出海增长
               <br />
-              <span style={{ color: "#D4AF37" }}>定制增长方案</span>
+              <span style={{ color: "#D4AF37" }}>诊断清楚再启动</span>
             </h2>
             <p
               className="text-lg leading-relaxed"
               style={{ color: "rgba(255,255,255,0.7)" }}
             >
-              VertaX 为每一家合作企业量身配置专属工作台。
+              VertaX 不是开放自助试用账号，而是先判断你们当前最值得先搭的增长闭环。
               <br />
-              留下信息，我们的解决方案顾问会在 1 个工作日内与您联系。
+              留下信息，我们会按行业、目标市场和当前瓶颈准备一次更像样的增长诊断。
             </p>
           </div>
 
           <div className="mt-12 space-y-4">
-            {[
-              "专属行业解决方案咨询",
-              "ICP 建模与目标市场分析",
-              "免费 POC 试用计划",
-              "专人对接全程支持",
-            ].map((item, i) => (
+            {fitSignals.map((item, i) => (
               <div key={i} className="flex items-center gap-3">
                 <CheckCircle2
                   className="w-5 h-5"
@@ -141,6 +182,46 @@ export default function InquiryPage() {
                 </span>
               </div>
             ))}
+          </div>
+
+          <div className="mt-10 grid gap-3">
+            {processSignals.map((signal) => {
+              const Icon = signal.icon;
+
+              return (
+                <div
+                  key={signal.label}
+                  className="rounded-2xl p-4"
+                  style={{
+                    background: "rgba(255,255,255,0.04)",
+                    border: "1px solid rgba(255,255,255,0.08)",
+                  }}
+                >
+                  <div className="flex items-start gap-3">
+                    <div
+                      className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
+                      style={{ background: "rgba(212,175,55,0.12)" }}
+                    >
+                      <Icon className="h-5 w-5" style={{ color: "#D4AF37" }} />
+                    </div>
+                    <div>
+                      <p
+                        className="text-xs uppercase tracking-[0.18em]"
+                        style={{ color: "rgba(255,255,255,0.45)" }}
+                      >
+                        {signal.label}
+                      </p>
+                      <p className="mt-1 text-base font-semibold" style={{ color: "#ffffff" }}>
+                        {signal.value}
+                      </p>
+                      <p className="mt-1 text-sm leading-6" style={{ color: "rgba(255,255,255,0.65)" }}>
+                        {signal.detail}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>
@@ -202,15 +283,15 @@ export default function InquiryPage() {
                   className="text-xl font-bold mb-2"
                   style={{ color: "#ffffff" }}
                 >
-                  提交成功
+                  已收到你的预约信息
                 </h3>
                 <p
                   className="text-sm mb-8"
                   style={{ color: "rgba(255,255,255,0.6)" }}
                 >
-                  我们的解决方案顾问会在 1 个工作日内与您联系。
+                  我们会在 1 个工作日内联系你，并按你填写的行业、目标市场和当前问题准备诊断重点。
                   <br />
-                  您也可以通过以下方式直接联系我们：
+                  你也可以通过以下方式直接联系我们：
                 </p>
 
                 <div className="space-y-4">
@@ -283,17 +364,27 @@ export default function InquiryPage() {
               /* Form */
               <>
                 <div className="text-center mb-6">
+                  <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium"
+                    style={{
+                      background: "rgba(212,175,55,0.12)",
+                      color: "#D4AF37",
+                      border: "1px solid rgba(212,175,55,0.18)",
+                    }}
+                  >
+                    <Building2 className="h-3.5 w-3.5" />
+                    Enterprise growth intake
+                  </div>
                   <h2
-                    className="text-2xl font-bold"
+                    className="mt-4 text-2xl font-bold"
                     style={{ color: "#ffffff" }}
                   >
-                    获取使用资格
+                    预约增长诊断
                   </h2>
                   <p
                     className="text-sm mt-1"
                     style={{ color: "rgba(255,255,255,0.6)" }}
                   >
-                    留下信息，开启您的出海增长之旅
+                    这不是自助注册。我们会先判断你们当前最值得启动的市场表达、获客或内容闭环。
                   </p>
                 </div>
 
@@ -399,6 +490,79 @@ export default function InquiryPage() {
                       className="text-xs font-medium"
                       style={{ color: "rgba(255,255,255,0.7)" }}
                     >
+                      所属行业 <span style={{ color: "rgba(255,255,255,0.3)" }}>(选填)</span>
+                    </label>
+                    <select
+                      name="industry"
+                      className="h-11 w-full rounded-md px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/30"
+                      defaultValue=""
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        color: "#ffffff",
+                      }}
+                    >
+                      <option value="" style={{ color: "#0B1220" }}>请选择</option>
+                      <option value="制造业" style={{ color: "#0B1220" }}>制造业</option>
+                      <option value="工业设备" style={{ color: "#0B1220" }}>工业设备</option>
+                      <option value="工业材料 / 化工" style={{ color: "#0B1220" }}>工业材料 / 化工</option>
+                      <option value="自动化 / 机器人" style={{ color: "#0B1220" }}>自动化 / 机器人</option>
+                      <option value="技术服务" style={{ color: "#0B1220" }}>技术服务</option>
+                      <option value="其他" style={{ color: "#0B1220" }}>其他</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium"
+                      style={{ color: "rgba(255,255,255,0.7)" }}
+                    >
+                      目标市场 / 重点区域 <span style={{ color: "rgba(255,255,255,0.3)" }}>(选填)</span>
+                    </label>
+                    <Input
+                      name="market"
+                      placeholder="如：北美、欧洲、中东"
+                      className="h-11"
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        color: "#ffffff",
+                      }}
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium"
+                      style={{ color: "rgba(255,255,255,0.7)" }}
+                    >
+                      当前最想先解决的问题 <span style={{ color: "#D4AF37" }}>*</span>
+                    </label>
+                    <select
+                      name="priority"
+                      required
+                      className="h-11 w-full rounded-md px-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/30"
+                      defaultValue=""
+                      style={{
+                        background: "rgba(255,255,255,0.05)",
+                        border: "1px solid rgba(255,255,255,0.1)",
+                        color: "#ffffff",
+                      }}
+                    >
+                      <option value="" style={{ color: "#0B1220" }}>请选择</option>
+                      <option value="市场表达不清" style={{ color: "#0B1220" }}>市场表达不清</option>
+                      <option value="目标客户不够准" style={{ color: "#0B1220" }}>目标客户不够准</option>
+                      <option value="内容增长断裂" style={{ color: "#0B1220" }}>内容增长断裂</option>
+                      <option value="线索跟进不连续" style={{ color: "#0B1220" }}>线索跟进不连续</option>
+                      <option value="老板看不到经营节奏" style={{ color: "#0B1220" }}>老板看不到经营节奏</option>
+                    </select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <label
+                      className="text-xs font-medium"
+                      style={{ color: "rgba(255,255,255,0.7)" }}
+                    >
                       留言{" "}
                       <span style={{ color: "rgba(255,255,255,0.3)" }}>
                         (选填)
@@ -407,7 +571,7 @@ export default function InquiryPage() {
                     <textarea
                       name="message"
                       rows={3}
-                      placeholder="请简要描述您的出海需求或感兴趣的场景..."
+                      placeholder="可补充目前的海外销售方式、独立站情况、内容现状，或你希望 30 天内先看到什么变化。"
                       className="w-full rounded-md px-3 py-2.5 text-sm resize-none focus:outline-none focus:ring-2 focus:ring-[#D4AF37]/30"
                       style={{
                         background: "rgba(255,255,255,0.05)",
@@ -429,7 +593,7 @@ export default function InquiryPage() {
                       border: "none",
                     }}
                   >
-                    {loading ? "提交中..." : "提交咨询"}
+                    {loading ? "提交中..." : "提交预约"}
                   </Button>
                 </form>
 
@@ -437,7 +601,7 @@ export default function InquiryPage() {
                   className="text-center mt-5 text-xs"
                   style={{ color: "rgba(255,255,255,0.4)" }}
                 >
-                  提交即表示您同意我们的服务条款和隐私政策
+                  提交即表示你同意我们基于上述信息安排沟通与诊断，我们不会将你的信息用于无关用途。
                 </p>
               </>
             )}

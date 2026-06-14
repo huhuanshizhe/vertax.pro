@@ -423,19 +423,38 @@ export function formatPhoneNumber(phone: string, country?: string): string {
  * 从网站提取 WhatsApp 联系方式
  */
 export async function extractWhatsAppFromWebsite(url: string): Promise<string[]> {
-  // 使用 Brave Search 搜索网站的 WhatsApp
-  try {
-    const { BraveSearchAdapter } = await import('@/lib/radar/adapters/brave-search');
-    const adapter = new BraveSearchAdapter({} as never);
+  const apiKey = process.env.BRAVE_SEARCH_API_KEY;
+  if (!apiKey) {
+    return [];
+  }
 
-    const result = await adapter.search({
-      keywords: [`site:${new URL(url).hostname} whatsapp`],
-      countries: [],
-    });
+  try {
+    const hostname = new URL(url).hostname;
+    const query = `site:${hostname} whatsapp`;
+    const params = new URLSearchParams({ q: query, count: '10' });
+
+    const response = await fetch(
+      `https://api.search.brave.com/res/v1/web/search?${params}`,
+      {
+        headers: {
+          'Accept': 'application/json',
+          'Accept-Encoding': 'gzip',
+          'X-Subscription-Token': apiKey,
+        },
+        signal: AbortSignal.timeout(30000),
+      }
+    );
+
+    if (!response.ok) {
+      return [];
+    }
+
+    const data = await response.json() as { web?: { results?: Array<{ description?: string }> } };
+    const results = data.web?.results || [];
 
     // 简单提取 WhatsApp 号码
     const whatsappNumbers: string[] = [];
-    for (const item of result.items) {
+    for (const item of results) {
       const matches = item.description?.match(/\+?\d{10,15}/g);
       if (matches) {
         whatsappNumbers.push(...matches);

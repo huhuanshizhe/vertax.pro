@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { ExternalLink, Sparkles, Zap } from "lucide-react";
 import { signIn, useSession } from "next-auth/react";
 import { Button } from "@/components/ui/button";
@@ -273,7 +274,14 @@ export default function LoginPage() {
               <p className="text-center text-sm leading-6 text-[var(--ci-text-secondary)]">
                 VertaX 账号由商务签约与交付流程开通。
                 <br />
-                如需访问权限，请联系您的客户成功经理或 VertaX 商务负责人。
+                如需访问权限，请联系您的客户成功经理、VertaX 商务负责人，或先前往
+                <Link
+                  href="/register"
+                  className="font-medium text-[var(--ci-accent-strong)] underline-offset-4 hover:underline"
+                >
+                  预约增长诊断
+                </Link>
+                。
               </p>
             </div>
           </section>

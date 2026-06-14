@@ -1,6 +1,5 @@
 // ==================== Incremental Scan Engine ====================
-// 增量扫描引擎：游标驱动 + 时间预算 + 锁归属校验
-// 集成 DiscoveryQueryPlanner + FastICPScorer (Phase 1)
+// 增量扫描引擎：游标驱动 + 时间预算 + 锁归属校验 + AI 关键词飞轮
 
 import { prisma } from '@/lib/prisma';
 import { 
@@ -11,19 +10,15 @@ import {
 } from './adapters';
 import {
   buildTenantIndustryRadarHints,
-  selectTenantIndustrySourcePacks,
+  mergeRadarKeywordHints,
 } from './tenant-industry-source-pack';
-import {
-  planDiscoveryQueries,
-  FallbackLexiconProvider,
-} from './discovery-query-planner';
-import {
-  fastICPScore,
-  buildDiscoveryEvidence,
-  extractLocalExclusions,
-  type ScoringContext,
-  DEFAULT_SCORING_CONFIG,
-} from './fast-icp-scorer';
+import { 
+  initializeKeywordPool, 
+  logSearch,
+  type KeywordPoolItem,
+  type SearchLogItem,
+} from './keyword-generator';
+import { selectNextSearchCombo } from './keyword-feedback';
 
 // ==================== 类型定义 ====================
 
@@ -48,7 +43,6 @@ interface CursorState {
   nextPageToken?: string;
   since?: string;          // ISO8601
   queryIndex?: number;
-  planVersion?: string;    // Query plan hash for cursor stability
   exhausted?: boolean;
 }
 
@@ -127,7 +121,24 @@ export async function runIncrementalScan(
     // 3. 获取适配器
     const adapter = getAdapter(source.code, source.adapterConfig as Record<string, unknown>);
 
-    // 4. 构建查询计划（替代原有的 flat keyword iteration）
+    // 4. 初始化/加载 AI 关键词池
+    const poolSize = await initializeKeywordPool(profileId);
+    if (poolSize === 0) {
+      stats.errors.push('No keywords available - please configure seedKeywords or company profile');
+      return stats;
+    }
+
+    // 重新加载 profile 以获取更新后的 keywordPool
+    const updatedProfile = await prisma.radarSearchProfile.findUnique({
+      where: { id: profileId },
+    });
+    if (!updatedProfile) throw new Error(`Profile not found after init: ${profileId}`);
+
+    const keywordPool = (updatedProfile.keywordPool as unknown as KeywordPoolItem[]) || [];
+    const searchLog = (updatedProfile.searchLog as unknown as SearchLogItem[]) || [];
+    const targetCountries = updatedProfile.targetCountries;
+
+    // 4.1 构建行业包关键词（兼容旧逻辑）
     const sourcePackHints = buildTenantIndustryRadarHints({
       tenantSlug: tenant?.slug,
       companyName: companyProfile?.companyName || tenant?.name,
@@ -139,87 +150,51 @@ export async function runIncrementalScan(
       painPoints: companyProfile?.painPoints,
       buyingTriggers: companyProfile?.buyingTriggers,
     });
+    
+    // 注入排除词
+    const exclusionRules = (updatedProfile.exclusionRules as { negativeKeywords?: string[] }) || {};
+    const negativeKeywords = [
+      ...(updatedProfile.negativeKeywords as string[] || []),
+      ...(exclusionRules.negativeKeywords || []),
+      ...sourcePackHints.negativeKeywords,
+    ];
+    const targetIndustries = mergeUnique([
+      ...updatedProfile.industryCodes,
+      ...sourcePackHints.targetIndustries,
+    ]);
 
-    // 使用 DiscoveryQueryPlanner 生成多语言查询计划
-    const lexiconProvider = new FallbackLexiconProvider();
-    const queryPlan = await planDiscoveryQueries({
-      tenantId: profile.tenantId,
-      tenantSlug: tenant?.slug,
-      packHints: sourcePackHints,
-      targetCountries: profile.targetCountries,
-      currentAdapterCode: source.code,
-      customKeywords: (profile.keywords as Record<string, string[]>)?.en,
-    }, lexiconProvider);
-
-    // Cursor stability: 如果 planVersion 变化，重置游标
-    if (cursor.planVersion && cursor.planVersion !== queryPlan.planVersion) {
-      cursor = { nextPage: 0, queryIndex: 0, planVersion: queryPlan.planVersion, exhausted: false };
-    }
-    cursor.planVersion = queryPlan.planVersion;
-
-    // Fallback: 如果 query planner 无输出，使用旧逻辑
-    const plannedQueries = queryPlan.queries;
-    if (plannedQueries.length === 0) {
-      const fallbackKeywords = [
-        ...((profile.keywords as Record<string, string[]>)?.en || []),
-      ];
-      for (const kw of fallbackKeywords.slice(0, 10)) {
-        plannedQueries.push({
-          text: kw,
-          language: 'en',
-          countryCode: profile.targetCountries[0] || '',
-          sourceCategory: 'web_serp_english',
-          intent: 'discovery',
-          priority: 20,
-          metadata: { termsUsed: [kw] },
-        });
-      }
+    // 5. 选择下一个要搜索的「关键词 × 国家」组合
+    const nextCombo = selectNextSearchCombo(keywordPool, targetCountries, searchLog);
+    if (!nextCombo) {
+      // 所有组合都搜完了
+      stats.exhausted = true;
+      console.log(`[scan-engine] All keyword×country combinations exhausted for profile ${profileId}`);
+      return stats;
     }
 
-    // 构建 FastICPScorer 上下文
-    const packs = selectTenantIndustrySourcePacks({
-      tenantSlug: tenant?.slug,
-      companyName: companyProfile?.companyName || tenant?.name,
-      companyIntro: companyProfile?.companyIntro || tenant?.domain,
-      coreProducts: companyProfile?.coreProducts,
-      targetIndustries: companyProfile?.targetIndustries,
-      scenarios: companyProfile?.scenarios,
-      buyerPersonas: companyProfile?.buyerPersonas,
-      painPoints: companyProfile?.painPoints,
-      buyingTriggers: companyProfile?.buyingTriggers,
-    });
-    const activePack = packs[0];
-    const scoringConfig = activePack?.scoringConfig || DEFAULT_SCORING_CONFIG;
-    const scoringContext: ScoringContext = {
-      scoringConfig,
-      targetCountries: profile.targetCountries,
-      targetIndustries: mergeUnique([
-        ...profile.industryCodes,
-        ...sourcePackHints.targetIndustries,
-      ]),
-      targetRegions: profile.targetRegions,
-      triggerKeywords: sourcePackHints.buyingTriggers,
-    };
+    const { keyword: currentKeyword, country: currentCountry } = nextCombo;
+    console.log(`[scan-engine] Searching: "${currentKeyword}" in ${currentCountry}`);
 
     const baseQuery: RadarSearchQuery = {
-      countries: profile.targetCountries.length > 0 ? profile.targetCountries : undefined,
-      regions: profile.targetRegions.length > 0 ? profile.targetRegions : undefined,
-      categories: profile.categoryFilters.length > 0 ? profile.categoryFilters : undefined,
+      keywords: [currentKeyword],
+      countries: [currentCountry],
+      regions: updatedProfile.targetRegions.length > 0 ? updatedProfile.targetRegions : undefined,
+      categories: updatedProfile.categoryFilters.length > 0 ? updatedProfile.categoryFilters : undefined,
+      targetIndustries: targetIndustries.length > 0 ? targetIndustries : undefined,
       cursor: {
         nextPage: cursor.nextPage,
         nextPageToken: cursor.nextPageToken,
         since: cursor.since,
         queryIndex: cursor.queryIndex,
-        planVersion: cursor.planVersion,
       },
       maxResults: options.maxResults,
     };
 
-    // 5. 创建审计用 RadarTask
+    // 6. 创建审计用 RadarTask
     const task = await prisma.radarTask.create({
       data: {
-        tenantId: profile.tenantId,
-        name: `Auto-scan: ${profile.name} × ${source.name}`,
+        tenantId: updatedProfile.tenantId,
+        name: `Auto-scan: ${updatedProfile.name} × ${source.name} [${currentKeyword}×${currentCountry}]`,
         sourceId,
         queryConfig: baseQuery as object,
         triggeredBy: 'scheduler',
@@ -228,11 +203,12 @@ export async function runIncrementalScan(
       },
     });
 
-    // 6. 预算循环（使用 PlannedQuery 驱动）
+    // 7. 预算循环（当前组合的分页搜索）
     let iterationCount = 0;
     const initialCursor = { ...cursor };
+    let currentComboExhausted = false;
 
-    while (Date.now() < deadline) {
+    while (Date.now() < deadline && !currentComboExhausted) {
       // 条款A: 每次迭代前校验锁归属
       if (iterationCount > 0 && iterationCount % 3 === 0) {
         const lockCheck = await prisma.radarSearchProfile.findUnique({
@@ -245,73 +221,37 @@ export async function runIncrementalScan(
         }
       }
 
-      // 从 PlannedQuery 列表中获取当前查询
-      const currentQueryIndex = cursor.queryIndex || 0;
-      if (currentQueryIndex >= plannedQueries.length) {
-        // 所有查询都搜索完了
-        cursor.exhausted = true;
-        cursor.since = new Date(Date.now() - 10 * 60 * 1000).toISOString();
-        cursor.queryIndex = 0;
-        stats.exhausted = true;
-        break;
-      }
-
-      const currentPlannedQuery = plannedQueries[currentQueryIndex];
-
-      // 获取该查询国家的本地排除词
-      const queryLexicon = await lexiconProvider.getCountryLexicon(
-        currentPlannedQuery.countryCode,
-        activePack?.id,
-        profile.tenantId
-      );
-      const localExclusions = extractLocalExclusions(queryLexicon, currentPlannedQuery.language);
-      scoringContext.localExclusions = localExclusions;
-
-      // 构建搜索查询（使用 rawQueryText，adapter 直接使用）
+      // 执行搜索
       const queryWithCursor: RadarSearchQuery = {
-        ...baseQuery,
-        rawQueryText: currentPlannedQuery.text,
-        plannedQueryMeta: {
-          language: currentPlannedQuery.language,
-          sourceCategory: currentPlannedQuery.sourceCategory,
-          intent: currentPlannedQuery.intent,
-          planVersion: queryPlan.planVersion,
-        },
-        countries: currentPlannedQuery.countryCode ? [currentPlannedQuery.countryCode] : baseQuery.countries,
+        keywords: [currentKeyword],
+        countries: [currentCountry],
+        regions: updatedProfile.targetRegions.length > 0 ? updatedProfile.targetRegions : undefined,
+        categories: updatedProfile.categoryFilters.length > 0 ? updatedProfile.categoryFilters : undefined,
+        targetIndustries: targetIndustries.length > 0 ? targetIndustries : undefined,
         cursor: {
           nextPage: cursor.nextPage,
           nextPageToken: cursor.nextPageToken,
           since: cursor.since,
           queryIndex: cursor.queryIndex,
-          planVersion: cursor.planVersion,
         },
+        maxResults: options.maxResults,
       };
 
       const result = await adapter.search(queryWithCursor);
       stats.fetched += result.items.length;
 
-      // 批量处理候选（使用 FastICPScorer 替代简单负面词过滤）
+      // 批量处理候选
       for (const item of result.items) {
-        const scoreResult = fastICPScore(item, scoringContext);
-
-        if (scoreResult.gate === 'HARD_REJECT') continue;
-
-        // 注入结构化证据
-        item.matchExplain = buildDiscoveryEvidence(
-          scoreResult, currentPlannedQuery, adapter.sourceCode, queryPlan.planVersion
-        ) as unknown as typeof item.matchExplain;
-        item.matchScore = scoreResult.score / 100;
+        // 条款B: 过滤排除词
+        if (negativeKeywords.length > 0) {
+          const itemText = `${item.displayName} ${item.description || ''}`.toLowerCase();
+          if (negativeKeywords.some(kw => itemText.includes(kw.toLowerCase()))) {
+            continue;
+          }
+        }
 
         try {
-          await processCandidate(
-            profile.tenantId, sourceId, task.id, profileId, item,
-            source.ttlDays, source.storagePolicy, stats,
-            {
-              tier: scoreResult.tier,
-              shouldDeepQualify: scoreResult.shouldDeepQualify,
-              reason: scoreResult.reason,
-            }
-          );
+          await processCandidate(updatedProfile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy, stats);
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Unknown error';
           stats.errors.push(`Candidate error: ${errMsg}`);
@@ -324,11 +264,10 @@ export async function runIncrementalScan(
         stats.cursorAdvanced = true;
       }
 
-      // 当前 PlannedQuery 搜索完成
+      // 当前组合搜索完成（无更多分页）
       if (result.isExhausted || !result.hasMore) {
-        cursor.queryIndex = (cursor.queryIndex || 0) + 1;
-        cursor.nextPage = 0;
-        cursor.nextPageToken = undefined;
+        currentComboExhausted = true;
+        stats.exhausted = true;
         stats.cursorAdvanced = true;
       }
 
@@ -339,6 +278,16 @@ export async function runIncrementalScan(
       // maxResults 检查
       if (options.maxResults && stats.fetched >= options.maxResults) break;
     }
+
+    // 8. 记录搜索日志（用于去重和反馈）
+    await logSearch(
+      profileId,
+      currentKeyword,
+      currentCountry,
+      stats.fetched,
+      stats.created,
+      0 // qualityCount 会在 qualify 后更新
+    );
 
     // 7. 写回游标（upsert）
     stats.cursorAdvanced = stats.cursorAdvanced || 
@@ -396,12 +345,6 @@ export async function runIncrementalScan(
 
 // ==================== 候选处理（upsert 去重） ====================
 
-interface CandidateScoringMeta {
-  tier: import('./fast-icp-scorer').ScoreTier;
-  shouldDeepQualify: boolean;
-  reason: string;
-}
-
 async function processCandidate(
   tenantId: string,
   sourceId: string,
@@ -410,8 +353,7 @@ async function processCandidate(
   item: NormalizedCandidate,
   ttlDays: number,
   storagePolicy: string,
-  stats: { created: number; duplicates: number; errors: string[] },
-  scoringMeta: CandidateScoringMeta
+  stats: { created: number; duplicates: number; errors: string[] }
 ): Promise<void> {
   const expireAt = ttlDays
     ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000)
@@ -424,10 +366,6 @@ async function processCandidate(
     const hash = Buffer.from(rawKey).toString('base64url').slice(0, 48);
     item = { ...item, externalId: 'fallback-' + hash };
   }
-
-  // Budget control: needs_review 候选直接进入 REVIEWING，不进入 AI qualify 队列
-  const initialStatus = scoringMeta.shouldDeepQualify ? 'NEW' : 'REVIEWING';
-  const initialQualifyTier = scoringMeta.tier === 'reject' ? undefined : scoringMeta.tier;
 
   const result = await prisma.radarCandidate.upsert({
     where: {
@@ -469,19 +407,13 @@ async function processCandidate(
 
       // 匹配信息
       matchExplain: item.matchExplain as object,
-      matchScore: item.matchScore,
       publishedAt: item.publishedAt,
 
       // TTL 策略
       rawData: storagePolicy !== 'ID_ONLY' ? (item.rawData as object) : undefined,
       expireAt,
 
-      // Budget control: shouldDeepQualify 决定初始状态
-      status: initialStatus,
-      qualifyTier: initialQualifyTier,
-      qualifyReason: scoringMeta.shouldDeepQualify
-        ? undefined
-        : scoringMeta.reason || 'Fast-scored needs_review; awaiting evidence verification',
+      status: 'NEW',
     },
     update: {
       // 仅更新时间戳，不覆盖已有数据

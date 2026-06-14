@@ -13,7 +13,6 @@ import { prisma } from '@/lib/prisma';
 import { chatCompletion } from '@/lib/ai-client';
 import type { Prisma } from '@prisma/client';
 import { createContactEnrichmentEngine } from '@/lib/osint/contact-enrichment';
-import { PeopleDataLabsAdapter } from './adapters/pdl';
 import {
   buildCandidateContactEnrichmentSnapshot,
   buildCandidateContactEnrichmentUpdate,
@@ -104,7 +103,7 @@ type DecisionMakerContact = {
 
 // ==================== 搜索工具封装 ====================
 
-export interface SearchResult {
+interface SearchResult {
   title?: string;
   url?: string;
   publishedDate?: string;
@@ -152,7 +151,7 @@ interface GooglePlacesIdentityEnrichment {
 /**
  * 统一搜索封装：优先使用 Exa，若失败或无结果则尝试 Tavily
  */
-export async function unifiedSearch(
+async function unifiedSearch(
   query: string, 
   type: 'news' | 'auto' = 'auto', 
   numResults: number = 10,
@@ -278,7 +277,7 @@ async function tavilySearch(
 /**
  * 使用 Hunter.io 查找个人邮箱
  */
-export async function hunterFindEmail(domain: string, fullName: string): Promise<{ email: string | null; confidence: number }> {
+async function hunterFindEmail(domain: string, fullName: string): Promise<{ email: string | null; confidence: number }> {
   try {
     const apiKey = process.env.HUNTER_API_KEY;
     if (!apiKey || !domain) return { email: null, confidence: 0 };
@@ -308,7 +307,7 @@ export async function hunterFindEmail(domain: string, fullName: string): Promise
   }
 }
 
-export function normalizeCompanyDomain(domainOrUrl: string | undefined): string | null {
+function normalizeCompanyDomain(domainOrUrl: string | undefined): string | null {
   if (!domainOrUrl) return null;
 
   try {
@@ -464,43 +463,6 @@ function mergeDecisionMakers(
   }
 
   return merged;
-}
-
-async function searchContactsWithPDL(domain: string): Promise<DecisionMakerContact[]> {
-  if (!process.env.PDL_API_KEY) {
-    return [];
-  }
-
-  try {
-    const adapter = new PeopleDataLabsAdapter({});
-    const contacts = await adapter.searchByCompany(domain, {
-      seniority: ['owner', 'founder', 'c_suite', 'director', 'manager'],
-      limit: 10,
-    });
-
-    return contacts
-      .filter((contact) => contact.displayName && contact.contactRole)
-      .map((contact) => {
-        const rawLinkedIn =
-          contact.rawData &&
-          typeof contact.rawData === 'object' &&
-          typeof (contact.rawData as Record<string, unknown>).linkedin_url === 'string'
-            ? (contact.rawData as Record<string, string>).linkedin_url
-            : undefined;
-
-        return {
-          name: contact.displayName,
-          title: contact.contactRole || 'Unknown',
-          email: contact.email,
-          phone: contact.phone,
-          linkedIn: normalizeLinkedInUrl(rawLinkedIn) || undefined,
-          emailConfidence: contact.email ? 90 : undefined,
-        };
-      });
-  } catch (error) {
-    console.warn('[RadarIntelligence] PDL search failed:', error);
-    return [];
-  }
 }
 
 function extractEmails(text: string): string[] {
@@ -672,13 +634,9 @@ async function searchContacts(
   const query = `"${companyName}" decision makers leadership "LinkedIn" contact information`;
   const searchResults = await unifiedSearch(query, 'auto', 10, country);
   const normalizedDomain = normalizeCompanyDomain(domain);
-  let pdlContacts: DecisionMakerContact[] = [];
-  if (allowPaidContactEnrichment && normalizedDomain) {
-    pdlContacts = await searchContactsWithPDL(normalizedDomain);
-  }
 
   if (searchResults.length === 0) {
-    return pdlContacts.length > 0 ? { decisionMakers: pdlContacts } : undefined;
+    return undefined;
   }
 
   const context = searchResults.map(r => `${r.title}\n${r.text?.slice(0, 500)}`).join('\n\n');
@@ -693,11 +651,7 @@ async function searchContacts(
     ], { model: 'qwen-plus', temperature: 0.1 });
 
     const parsed = JSON.parse(aiResponse.content.trim().replace(/```json|```/g, ''));
-    let makers = parsed.decisionMakers || [];
-
-    if (pdlContacts.length > 0) {
-      makers = mergeDecisionMakers(makers, pdlContacts);
-    }
+    const makers = parsed.decisionMakers || [];
 
     // 如果有域名，尝试用 Hunter.io 查找邮箱
     if (allowPaidContactEnrichment && normalizedDomain && makers.length > 0) {

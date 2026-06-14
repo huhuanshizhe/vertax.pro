@@ -348,8 +348,21 @@ export default function CustomerWorkbenchPage() {
     [actions.length, stats?.highIntentLeads, stats?.knowledgeCompleteness, stats?.pendingContents],
   );
 
+  const isBriefingPending = isLoading && !briefing;
+  const briefingSummary = isBriefingPending
+    ? "正在生成今日经营简报，正在汇总线索、内容和触达进展。"
+    : briefing?.summary ||
+      "今日重点已经整理好。接下来优先减少阻塞，让有效动作进入持续推进节奏。";
+
   const highlights = useMemo(
     () =>
+      isBriefingPending
+        ? [
+            "正在读取当前内容资产、线索和渠道状态。",
+            "正在汇总已形成的经营进展与可复用动作。",
+            "AI 简报生成后会在这里替换为今日重点。",
+          ]
+        :
       briefing?.highlights?.length
         ? briefing.highlights.slice(0, 3)
         : [
@@ -357,11 +370,18 @@ export default function CustomerWorkbenchPage() {
             `当前识别到 ${stats?.highIntentLeads ?? 0} 条高意向商机，可进入跟进节奏。`,
             "今日重点已经整理好，可以直接推进下一步。",
           ],
-    [briefing?.highlights, stats?.highIntentLeads, stats?.totalContents],
+    [briefing?.highlights, isBriefingPending, stats?.highIntentLeads, stats?.totalContents],
   );
 
   const recommendations = useMemo(
     () =>
+      isBriefingPending
+        ? [
+            "先等待本轮经营简报完成，再判断最该推进的动作。",
+            "如果刷新后仍未生成，再检查 AI 配置或重试加载。",
+            "你也可以先直接问 AI 助理：现在最该做什么。",
+          ]
+        :
       briefing?.recommendations?.length
         ? briefing.recommendations.slice(0, 3)
         : [
@@ -373,7 +393,7 @@ export default function CustomerWorkbenchPage() {
               : "可以把精力转向放大已验证有效的动作，而不是继续补更多仪表盘。",
             "让 AI 助理直接给出下一步动作，再把事项推进到对应位置。",
           ],
-    [actions.length, briefing?.recommendations, tenantInfo?.isPublishingSetupPending],
+    [actions.length, briefing?.recommendations, isBriefingPending, tenantInfo?.isPublishingSetupPending],
   );
 
   const priorityActions = useMemo(() => actions.slice(0, 4), [actions]);
@@ -524,6 +544,155 @@ export default function CustomerWorkbenchPage() {
     ],
   );
 
+  const operatingVerdict = useMemo(() => {
+    const knowledge = stats?.knowledgeCompleteness ?? 0;
+    const highIntent = stats?.highIntentLeads ?? 0;
+    const pendingContents = stats?.pendingContents ?? 0;
+    const socialConnected = tenantInfo?.socialConnectedCount ?? 0;
+
+    if (socialConnected === 0) {
+      return {
+        label: "当前经营判断",
+        headline: "系统已经积累了内部资料和动作基础，但还没有真正形成外部市场反馈。",
+        detail:
+          "在打通首个触达通路之前，内容、资料和雷达仍然主要停留在系统内部，难以形成真实市场信号。",
+        focusLabel: "第一优先级",
+        focusValue: "先打通首个外部触达通路",
+        ctaLabel: "配置发布通路",
+        ctaHref: "/customer/social/accounts",
+        tone: "warning" as const,
+      };
+    }
+
+    if (knowledge < 60) {
+      return {
+        label: "当前经营判断",
+        headline: "外部通路已经具备，但市场表达底座还不足以支撑稳定成交判断。",
+        detail:
+          "当前更像是在尝试出海，而不是系统化经营。需要先把价值表达、场景和目标客户说清楚。",
+        focusLabel: "当前重点",
+        focusValue: "把表达基础提升到可稳定复用的水平",
+        ctaLabel: "完善企业表达",
+        ctaHref: "/customer/knowledge/company",
+        tone: "accent" as const,
+      };
+    }
+
+    if (highIntent > 0) {
+      return {
+        label: "当前经营判断",
+        headline: `已经出现 ${highIntent} 条高意向线索，当前价值在于把判断转成明确跟进动作。`,
+        detail:
+          "这时候最怕的是继续补资料、补页面，却没有把高意向客户推进到下一步。现在要优先压缩犹豫成本。",
+        focusLabel: "当前重点",
+        focusValue: "聚焦高意向客户并形成推进节奏",
+        ctaLabel: "查看高意向线索",
+        ctaHref: "/customer/radar",
+        tone: "warning" as const,
+      };
+    }
+
+    if (pendingContents > 0) {
+      return {
+        label: "当前经营判断",
+        headline: `系统基础已经连起来了，下一步要把 ${pendingContents} 项待推进表达真正变成外部市场动作。`,
+        detail:
+          "如果内容持续停留在草稿和待发布状态，系统就会给人一种很忙但没有结果的感觉。",
+        focusLabel: "当前重点",
+        focusValue: "把内容节奏从库存变成实际发布",
+        ctaLabel: "推进内容发布",
+        ctaHref: "/customer/marketing/contents",
+        tone: "accent" as const,
+      };
+    }
+
+    return {
+      label: "当前经营判断",
+      headline: "系统基础已经成型，接下来要做的是持续放大已经有效的动作。",
+      detail:
+        "这时不需要再堆更多模块，而要让表达、触达和跟进形成可被复盘的经营节奏。",
+      focusLabel: "当前重点",
+      focusValue: "把阶段性动作沉淀成固定经营节奏",
+      ctaLabel: "查看推进清单",
+      ctaHref: "/customer/hub",
+      tone: "success" as const,
+    };
+  }, [
+    stats?.highIntentLeads,
+    stats?.knowledgeCompleteness,
+    stats?.pendingContents,
+    tenantInfo?.socialConnectedCount,
+  ]);
+
+  const milestoneRows = useMemo(
+    () => [
+      {
+        label: "表达基础里程碑",
+        value:
+          (stats?.knowledgeCompleteness ?? 0) >= 60
+            ? "维持在 60% 以上并继续加深"
+            : "先把表达基础提升到 60%",
+        detail: "先让价值、场景和客户方向可以稳定复用。",
+      },
+      {
+        label: "外部触达里程碑",
+        value:
+          (tenantInfo?.socialConnectedCount ?? 0) > 0
+            ? `保持 ${tenantInfo?.socialConnectedCount ?? 0} 个可用通路稳定运行`
+            : "打通首个可持续触达通路",
+        detail: "没有通路，再多内容和判断也无法进入市场。",
+      },
+      {
+        label: "转化信号里程碑",
+        value:
+          (stats?.highIntentLeads ?? 0) > 0
+            ? `优先推进 ${stats?.highIntentLeads ?? 0} 条高意向线索`
+            : "形成首批高意向线索并进入跟进",
+        detail: "真正的结果不是系统变丰富，而是出现可推进的机会。",
+      },
+    ],
+    [
+      stats?.highIntentLeads,
+      stats?.knowledgeCompleteness,
+      tenantInfo?.socialConnectedCount,
+    ],
+  );
+
+  const executiveSignals = useMemo(
+    () => [
+      {
+        label: "市场资产",
+        value: `${stats?.totalContents ?? 0} 篇`,
+        detail:
+          (stats?.pendingContents ?? 0) > 0
+            ? `${stats?.pendingContents ?? 0} 篇仍停留在待推进状态`
+            : "当前内容已进入可继续放大的基础状态",
+      },
+      {
+        label: "外部通路",
+        value: `${tenantInfo?.socialConnectedCount ?? 0} 个`,
+        detail:
+          (tenantInfo?.socialConnectedCount ?? 0) > 0
+            ? "外部触达已经具备最小运行条件"
+            : "仍未打通对外触达，增长难以形成真实反馈",
+      },
+      {
+        label: "经营信号",
+        value: `${stats?.highIntentLeads ?? 0} 条`,
+        detail:
+          (stats?.highIntentLeads ?? 0) > 0
+            ? "已有值得推进的高意向线索"
+            : "还没有形成足够明确的高意向机会",
+      },
+    ],
+    [
+      stats?.highIntentLeads,
+      stats?.pendingContents,
+      stats?.totalContents,
+      tenantInfo?.socialConnectedCount,
+    ],
+  );
+
   const assistantSignals = useMemo(
     () => [
       {
@@ -597,6 +766,64 @@ export default function CustomerWorkbenchPage() {
 
         <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_minmax(420px,0.86fr)]">
           <div className="order-2 space-y-4 xl:order-1">
+            <div className="grid gap-3 lg:grid-cols-[minmax(0,1.08fr)_minmax(320px,0.92fr)]">
+              <section className="ci-data-panel p-5">
+                <div className="flex items-center gap-2">
+                  <TrendingUp size={16} className="text-[var(--ci-accent-strong)]" />
+                  <span className="ci-kicker text-[var(--ci-accent-strong)]">
+                    {operatingVerdict.label}
+                  </span>
+                </div>
+                <h2 className="mt-4 text-[22px] font-semibold leading-9 text-[var(--ci-text)]">
+                  {operatingVerdict.headline}
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm leading-7 text-[var(--ci-text-secondary)]">
+                  {operatingVerdict.detail}
+                </p>
+                <div className="mt-5 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+                  <div className="rounded-xl border border-[var(--ci-border)] bg-white/72 px-4 py-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ci-text-muted)]">
+                      {operatingVerdict.focusLabel}
+                    </p>
+                    <p className="mt-2 text-base font-semibold text-[var(--ci-text)]">
+                      {operatingVerdict.focusValue}
+                    </p>
+                  </div>
+                  <Link
+                    href={operatingVerdict.ctaHref}
+                    className="inline-flex items-center justify-center rounded-md bg-[var(--ci-accent)] px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-[var(--ci-accent-strong)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--ci-accent)]/30"
+                  >
+                    {operatingVerdict.ctaLabel}
+                  </Link>
+                </div>
+                <div className="mt-5 grid gap-3 md:grid-cols-3">
+                  {executiveSignals.map((signal) => (
+                    <ExecutiveSignalCard key={signal.label} {...signal} />
+                  ))}
+                </div>
+              </section>
+
+              <section className="ci-data-panel p-5">
+                <div className="flex items-center gap-2">
+                  <Compass size={16} className="text-[var(--ci-accent-strong)]" />
+                  <span className="ci-kicker text-[var(--ci-accent-strong)]">
+                    Next Milestone
+                  </span>
+                </div>
+                <h2 className="mt-4 text-xl font-semibold text-[var(--ci-text)]">
+                  下一里程碑
+                </h2>
+                <p className="mt-2 text-sm leading-7 text-[var(--ci-text-secondary)]">
+                  不再继续堆更多动作，先把这三条经营里程碑跑通。
+                </p>
+                <div className="mt-4 space-y-3">
+                  {milestoneRows.map((row) => (
+                    <ExecutiveMilestoneRow key={row.label} {...row} />
+                  ))}
+                </div>
+              </section>
+            </div>
+
             <div className="grid gap-3 lg:grid-cols-[minmax(0,0.88fr)_minmax(0,1.12fr)]">
               <section className="ci-data-panel p-4">
                 <div className="flex items-center gap-2">
@@ -668,10 +895,14 @@ export default function CustomerWorkbenchPage() {
                 <span className="ci-kicker text-[var(--ci-accent-strong)]">
                   Daily Briefing
                 </span>
+                {isBriefingPending ? (
+                  <span className="rounded-full bg-[rgba(79,141,246,0.12)] px-2.5 py-1 text-[11px] font-medium text-[var(--ci-accent-strong)]">
+                    正在生成
+                  </span>
+                ) : null}
               </div>
               <p className="mt-4 text-[18px] leading-8 text-[var(--ci-text)]">
-                {briefing?.summary ||
-                  "今日重点已经整理好。接下来优先减少阻塞，让有效动作进入持续推进节奏。"}
+                {briefingSummary}
               </p>
               <div className="mt-5 grid gap-4 xl:grid-cols-2">
                 <BriefingBlock
@@ -906,6 +1137,57 @@ function MetricCard({
         </p>
       </div>
     </Link>
+  );
+}
+
+function ExecutiveSignalCard({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--ci-border)] bg-white/72 px-4 py-4">
+      <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--ci-text-muted)]">
+        {label}
+      </p>
+      <p className="mt-2 text-xl font-semibold text-[var(--ci-text)]">{value}</p>
+      <p className="mt-2 text-sm leading-6 text-[var(--ci-text-secondary)]">
+        {detail}
+      </p>
+    </div>
+  );
+}
+
+function ExecutiveMilestoneRow({
+  label,
+  value,
+  detail,
+}: {
+  label: string;
+  value: string;
+  detail: string;
+}) {
+  return (
+    <div className="rounded-xl border border-[var(--ci-border)] bg-white/72 px-4 py-4">
+      <div className="flex items-start gap-3">
+        <span className="mt-1 flex h-6 min-w-6 items-center justify-center rounded-full bg-[rgba(79,141,246,0.12)] text-[11px] font-semibold text-[var(--ci-accent-strong)]">
+          •
+        </span>
+        <div>
+          <p className="text-sm font-semibold text-[var(--ci-text)]">{label}</p>
+          <p className="mt-1 text-sm leading-6 text-[var(--ci-text-secondary)]">
+            {value}
+          </p>
+          <p className="mt-1 text-xs leading-5 text-[var(--ci-text-muted)]">
+            {detail}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 }
 

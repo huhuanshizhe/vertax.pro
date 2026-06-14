@@ -2,7 +2,7 @@
 
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
-import { aiClient } from "@/lib/ai-client";
+import { aiClient, parseStructuredJsonObjectResponse } from "@/lib/ai-client";
 
 // ===================== Types =====================
 
@@ -29,7 +29,7 @@ export type AIBriefing = {
   summary: string;
   highlights: string[];
   recommendations: string[];
-  generatedAt: Date;
+  generatedAt: string;
 };
 
 export type TenantInfo = {
@@ -320,7 +320,7 @@ export async function generateAIBriefing(): Promise<AIBriefing> {
       summary: '请先登录以获取个性化简报',
       highlights: [],
       recommendations: [],
-      generatedAt: new Date(),
+      generatedAt: new Date().toISOString(),
     };
   }
 
@@ -333,7 +333,7 @@ export async function generateAIBriefing(): Promise<AIBriefing> {
       summary: '用户信息加载失败',
       highlights: [],
       recommendations: [],
-      generatedAt: new Date(),
+      generatedAt: new Date().toISOString(),
     };
   }
 
@@ -397,15 +397,19 @@ export async function generateAIBriefing(): Promise<AIBriefing> {
     const content = response.choices[0]?.message?.content;
     if (!content) throw new Error("AI未返回结果");
 
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error("AI返回格式错误");
+    const result = (await parseStructuredJsonObjectResponse(content)) as {
+      summary?: string;
+      highlights?: unknown;
+      recommendations?: unknown;
+    };
 
-    const result = JSON.parse(jsonMatch[0]);
     return {
       summary: result.summary || '数据分析中...',
-      highlights: result.highlights || [],
-      recommendations: result.recommendations || [],
-      generatedAt: new Date(),
+      highlights: Array.isArray(result.highlights) ? result.highlights.map(String) : [],
+      recommendations: Array.isArray(result.recommendations)
+        ? result.recommendations.map(String)
+        : [],
+      generatedAt: new Date().toISOString(),
     };
   } catch (error) {
     console.error("AI简报生成失败:", error);
@@ -440,7 +444,7 @@ export async function generateAIBriefing(): Promise<AIBriefing> {
         : '系统初始化中，建议完善企业画像',
       highlights,
       recommendations,
-      generatedAt: new Date(),
+      generatedAt: new Date().toISOString(),
     };
   }
 }

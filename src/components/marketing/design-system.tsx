@@ -133,14 +133,14 @@ export function MarketingNav({ showEnLink = true }: { showEnLink?: boolean }) {
           ) : null}
           <Link
             className="hidden rounded-full px-4 py-2 text-sm font-semibold transition-all hover:-translate-y-0.5 sm:inline-flex"
-            href="/contact"
+            href="/register"
             style={{
               background: colors.brand.gradient,
               boxShadow: shadows.glow,
               color: colors.text.inverse,
             }}
           >
-            预约演示
+            预约增长诊断
           </Link>
           <button
             aria-label="打开导航菜单"
@@ -163,7 +163,7 @@ export function MarketingNav({ showEnLink = true }: { showEnLink?: boolean }) {
               { href: '/cases', label: '客户案例' },
               { href: '/about/what-is-vertax', label: '关于我们' },
               { href: '/faq', label: 'FAQ' },
-              { href: '/contact', label: '预约演示' },
+              { href: '/register', label: '预约增长诊断' },
             ].map((item) => (
               <Link
                 className="block rounded-2xl px-3 py-3 text-sm"
