@@ -1,4 +1,26 @@
 {
   "framework": "nextjs",
-  "buildCommand": "prisma generate && next build"
+  "buildCommand": "prisma migrate deploy && prisma generate && next build",
+  "crons": [
+    { "path": "/api/cron/radar-scan",           "schedule": "*/5 * * * *"  },
+    { "path": "/api/cron/radar-qualify",        "schedule": "*/10 * * * *" },
+    { "path": "/api/cron/radar-enrich",         "schedule": "0 */6 * * *"  },
+    { "path": "/api/cron/radar-exa-enrich",     "schedule": "0 */4 * * *"  },
+    { "path": "/api/cron/radar-auto-import",    "schedule": "*/30 * * * *" },
+    { "path": "/api/cron/radar-notify",         "schedule": "0 8 * * *"    },
+    { "path": "/api/cron/radar-cleanup",        "schedule": "0 2 * * *"    },
+    { "path": "/api/cron/radar-daily-snapshot", "schedule": "0 0 * * *"    },
+    { "path": "/api/cron/asset-process",        "schedule": "*/1 * * * *"  },
+    { "path": "/api/cron/batch-import-process", "schedule": "*/5 * * * *"  },
+    { "path": "/api/cron/prospect-enrich",      "schedule": "*/30 * * * *" },
+    { "path": "/api/cron/auto-publish",         "schedule": "0 * * * *"    },
+    { "path": "/api/cron/auto-push",            "schedule": "0 * * * *"    },
+    { "path": "/api/cron/publish-scheduled",    "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/push-timeout",         "schedule": "0 * * * *"    },
+    { "path": "/api/cron/sequence-scheduler",   "schedule": "*/15 * * * *" },
+    { "path": "/api/cron/web-crawl",            "schedule": "*/30 * * * *" },
+    { "path": "/api/cron/geo-citation-check",   "schedule": "0 6 * * *"    },
+    { "path": "/api/cron/social-metrics-sync",  "schedule": "0 8 * * *"    },
+    { "path": "/api/cron/social-publish",       "schedule": "0 * * * *"    }
+  ]
 }
