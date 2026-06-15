@@ -34,7 +34,7 @@ async function main() {
   console.log('🚀 Testing Middleware Behavior\n');
   
   await testDomain('vertax.pro');
-  await testDomain('tdpaint.vertax.pro');
+  await testDomain('tdpaint1.vertax.pro');
   await testDomain('machrio.vertax.pro');
   await testDomain('tower.vertax.pro');
   

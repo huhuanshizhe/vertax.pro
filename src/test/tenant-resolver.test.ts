@@ -5,7 +5,7 @@ describe("tenant-resolver canonical redirects", () => {
   it("does not rewrite requests that are already on the user's tenant host", () => {
     expect(
       getTenantCanonicalRedirectUrl({
-        currentUrl: "https://tdpaint.vertax.pro/customer/home",
+        currentUrl: "https://tdpaint1.vertax.pro/customer/home",
         sessionTenantSlug: "tdpaint",
       }),
     ).toBeNull();
@@ -17,7 +17,7 @@ describe("tenant-resolver canonical redirects", () => {
         currentUrl: "https://terrafly.vertax.pro/customer/home?tab=briefing",
         sessionTenantSlug: "tdpaint",
       }),
-    ).toBe("https://tdpaint.vertax.pro/customer/home?tab=briefing");
+    ).toBe("https://tdpaint1.vertax.pro/customer/home?tab=briefing");
   });
 
   it("rewrites root-domain login requests back to the tenant host", () => {
@@ -26,7 +26,7 @@ describe("tenant-resolver canonical redirects", () => {
         currentUrl: "https://vertax.pro/login?callbackUrl=%2Fcustomer%2Fhome",
         sessionTenantSlug: "tdpaint",
       }),
-    ).toBe("https://tdpaint.vertax.pro/login?callbackUrl=%2Fcustomer%2Fhome");
+    ).toBe("https://tdpaint1.vertax.pro/login?callbackUrl=%2Fcustomer%2Fhome");
   });
 
   it("keeps localhost customer routes on localhost during development", () => {

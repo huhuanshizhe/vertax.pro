@@ -18,7 +18,7 @@ async function main() {
       name: '涂豆科技',
       email: 'admin@tdpaint.com',
       password: 'Tdpaint2026!',
-      url: 'https://tdpaint.vertax.pro',
+      url: 'https://tdpaint1.vertax.pro',
     },
     {
       slug: 'machrio',

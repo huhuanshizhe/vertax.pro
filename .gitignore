@@ -165,3 +165,6 @@ radar-demo.html
 nul
 
 .vercel
+.idea
+pnpm-workspace.yaml
+
