@@ -28,10 +28,10 @@ async function main() {
     {
       slug: 'tdpaint',
       name: '涂豆科技',
-      domain: 'tdpaint1.vertax.pro',
+      domain: 'tdpaint.vertax.pro',
       email: 'admin@tdpaint.com',
       password: 'Tdpaint2026!',
-      url: 'https://tdpaint1.vertax.pro',
+      url: 'https://tdpaint.vertax.pro',
     },
     {
       slug: 'machrio',

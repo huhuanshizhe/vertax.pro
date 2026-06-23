@@ -20,7 +20,7 @@ async function main() {
       name: '涂豆科技',
       email: 'admin@tdpaint.com',
       password: 'Tdpaint2026!',
-      url: 'https://tdpaint1.vertax.pro',
+      url: 'https://tdpaint.vertax.pro',
       roleName: '企业管理员',
     },
     {
@@ -153,7 +153,7 @@ async function main() {
   console.log('═'.repeat(60));
   console.log('\n📋 账号汇总：');
   console.log('\n【涂豆科技】');
-  console.log('  网址：https://tdpaint1.vertax.pro');
+  console.log('  网址：https://tdpaint.vertax.pro');
   console.log('  邮箱：admin@tdpaint.com');
   console.log('  密码：Tdpaint2026!');
   console.log('\n【MachRio】');

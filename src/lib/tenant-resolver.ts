@@ -66,7 +66,7 @@ export function resolveTenant(hostname: string): TenantInfo {
     };
   }
   
-  // Check if it's a customer subdomain (e.g., tdpaint1.vertax.pro)
+  // Check if it's a customer subdomain (e.g., tdpaint.vertax.pro)
   if (domain.endsWith(`.${BASE_DOMAIN}`)) {
     const tenantSlug = domain.replace(`.${BASE_DOMAIN}`, '');
     return {
