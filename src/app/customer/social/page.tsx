@@ -744,7 +744,7 @@ export default function SocialPage() {
               >
                 返回列表
               </button>
-            ) : null
+            ) : null}
             <button 
               onClick={loadData}
               className="p-2 text-slate-500 hover:text-[var(--ci-accent)] transition-colors"
