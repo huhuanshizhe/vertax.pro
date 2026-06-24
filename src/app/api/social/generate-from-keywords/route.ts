@@ -37,6 +37,17 @@ export async function POST(request: Request) {
 
     console.log("[API /social/generate-from-keywords] Starting pipeline...");
 
+    // 检查演示模式
+    const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+    
+    if (isDemoMode) {
+      console.log("[API /social/generate-from-keywords] Demo mode detected, returning mock data");
+      return NextResponse.json({
+        success: true,
+        data: generateMockData(maxCoreKeywords, maxLongTailPerCore, platforms),
+      });
+    }
+
     // 1. 运行关键词挖掘流水线
     const keywordResult = await runKeywordExpansionPipeline(
       session.user.tenantId,
@@ -121,6 +132,107 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+// ==================== 演示模式辅助函数 ====================
+
+/**
+ * 生成模拟数据用于演示
+ */
+function generateMockData(
+  maxCoreKeywords: number,
+  maxLongTailPerCore: number,
+  platforms: string[]
+) {
+  // 模拟核心关键词
+  const coreKeywords = Array.from({ length: Math.min(maxCoreKeywords, 10) }, (_, i) => ({
+    id: `core-${i}`,
+    term: ["工业涂料", "防腐技术", "环保涂装", "智能喷涂", "表面处理"][i % 5],
+    category: ["product", "technology", "industry", "scenario", "pain_point"][i % 5],
+    metrics: {
+      searchVolume: Math.floor(Math.random() * 5000) + 100,
+      competition: ["low", "medium", "high"][Math.floor(Math.random() * 3)] as any,
+      commercialIntent: Math.random(),
+      relevance: 0.7 + Math.random() * 0.3,
+    },
+    confidence: 0.8 + Math.random() * 0.2,
+  }));
+
+  // 模拟长尾关键词
+  const longTailKeywords = Array.from(
+    { length: Math.min(maxCoreKeywords * maxLongTailPerCore, 50) },
+    (_, i) => ({
+      id: `longtail-${i}`,
+      coreKeywordId: `core-${i % coreKeywords.length}`,
+      term: `${coreKeywords[i % coreKeywords.length].term} ${[
+        "解决方案",
+        "最佳实践",
+        "成本分析",
+        "技术指南",
+        "案例研究",
+      ][i % 5]}`,
+      category: coreKeywords[i % coreKeywords.length].category,
+      metrics: {
+        searchVolume: Math.floor(Math.random() * 1000) + 50,
+        competition: ["low", "medium", "high"][Math.floor(Math.random() * 3)] as any,
+        commercialIntent: Math.random(),
+        relevance: 0.6 + Math.random() * 0.4,
+      },
+      contentAngle: [
+        "如何选择合适的工业涂料",
+        "防腐涂层的最新技术趋势",
+        "环保涂装的成本效益分析",
+        "智能喷涂系统的应用场景",
+        "表面处理的质量控制要点",
+      ][i % 5],
+      searchIntent: ["informational", "commercial", "transactional"][i % 3] as any,
+    })
+  );
+
+  // 计算统计数据
+  const avgSearchVolume =
+    longTailKeywords.reduce((sum, kw) => sum + kw.metrics.searchVolume, 0) /
+    longTailKeywords.length;
+
+  const highValueKeywords = longTailKeywords.filter(
+    (kw) => kw.metrics.searchVolume > 500 && kw.metrics.commercialIntent > 0.7
+  ).length;
+
+  // 模拟生成的内容
+  const contents = platforms.flatMap((platform) =>
+    longTailKeywords.slice(0, 5).map((keyword, idx) => ({
+      text: `【${keyword.term}】\n\n在${keyword.contentAngle}方面，我们提供专业的解决方案。通过创新技术和丰富经验，帮助客户实现降本增效的目标。\n\n我们的优势：\n• 15年行业经验\n• 500+成功案例\n• ISO9001认证\n• 24/7技术支持`,
+      hashtags: [`#${keyword.term.replace(/\s+/g, "")}`, `#VertaX`, `#${platform}`],
+      cta: "立即联系我们获取免费方案！",
+      imagePrompt: `Professional industrial ${keyword.term} solution showcase, modern factory setting, clean and professional photography style, blue and white color scheme, high quality product demonstration`,
+      metadata: {
+        keywordUsed: keyword.term,
+        searchIntent: keyword.searchIntent,
+        contentAngle: keyword.contentAngle || "general",
+        estimatedReadTime: Math.floor(Math.random() * 30) + 15,
+      },
+    }))
+  );
+
+  return {
+    keywords: {
+      core: coreKeywords,
+      longTail: longTailKeywords,
+      stats: {
+        totalCoreKeywords: coreKeywords.length,
+        totalLongTailKeywords: longTailKeywords.length,
+        avgSearchVolume: Math.round(avgSearchVolume),
+        highValueKeywords,
+      },
+    },
+    contents,
+    stats: {
+      totalGenerated: contents.length,
+      successCount: contents.length,
+      failedCount: 0,
+      avgLength: Math.round(contents.reduce((sum, c) => sum + c.text.length, 0) / contents.length),
+    },
+  };
 }
 
 // GET方法:获取已有的生成结果(可选)
