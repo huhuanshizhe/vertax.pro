@@ -71,7 +71,7 @@ export async function POST(request: Request) {
 
     // 3. 批量生成社媒内容
     const generationInputs = keywordsToUse.flatMap((keyword) =>
-      platforms.map((platform) => ({
+      platforms.map((platform: string) => ({
         keyword,
         platform,
         tone: tone as any,
