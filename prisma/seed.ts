@@ -183,6 +183,34 @@ async function main() {
     },
   });
 
+  // ==================== TDPaint 租户配置 ====================
+
+  // Create tdpaint tenant (涂豆科技)
+  const tdpaintTenant = await prisma.tenant.upsert({
+    where: { slug: "tdpaint" },
+    update: {},
+    create: {
+      name: "涂豆科技",
+      slug: "tdpaint",
+      plan: "pro",
+      status: "active",
+    },
+  });
+
+  // Create tdpaint admin user
+  const tdpaintPassword = await hash("Tdpaint2026!", 10);
+  await prisma.user.upsert({
+    where: { email: "admin@tdpaint.com" },
+    update: {},
+    create: {
+      email: "admin@tdpaint.com",
+      name: "TDPaint 管理员",
+      password: tdpaintPassword,
+      tenantId: tdpaintTenant.id,
+      roleId: companyAdmin.id,
+    },
+  });
+
   console.log("Seed completed successfully!");
 }
 

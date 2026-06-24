@@ -19,6 +19,7 @@ model Tenant {
 
   users  User[]
   assets Asset[]
+  chunks AssetChunk[]
 }
 
 // User 模型（简化版）

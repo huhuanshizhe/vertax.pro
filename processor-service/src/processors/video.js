@@ -143,6 +143,3 @@ function estimateTokens(text) {
   const otherChars = text.length - chineseChars;
   return Math.ceil(chineseChars / 1.5 + otherChars / 4);
 }
-
-// 导出帧处理函数供外部调用
-export { processVideoFrames };

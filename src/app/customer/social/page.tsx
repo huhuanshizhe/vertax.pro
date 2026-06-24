@@ -41,9 +41,10 @@ import {
 import { exportSocialPostsToCSV } from '@/actions/content-export';
 import { downloadCSV } from '@/lib/utils/download';
 import { getContentPieces } from '@/actions/contents';
+import KeywordDrivenContentGenerator from '@/components/keyword-driven-content-generator';
 import { toast } from 'sonner';
 
-type ViewMode = 'list' | 'create';
+type ViewMode = 'list' | 'create' | 'keyword-driven';
 type CreateMode = 'ai' | 'manual';
 
 // Platform icons and info
@@ -709,25 +710,26 @@ export default function SocialPage() {
           </div>
           <div className="flex flex-wrap items-center gap-3">
             {viewMode === 'list' && (
-              <button 
-                onClick={handleExport}
-                className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors border"
-                style={{ borderColor: 'var(--ci-border)', color: 'var(--ci-text-muted)' }}
-              >
-                <Download size={16} />
-                导出 CSV
-              </button>
+              <>
+                <button 
+                  onClick={handleExport}
+                  className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors border"
+                  style={{ borderColor: 'var(--ci-border)', color: 'var(--ci-text-muted)' }}
+                >
+                  <Download size={16} />
+                  导出 CSV
+                </button>
+                <button 
+                  onClick={() => setViewMode('keyword-driven')}
+                  className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors"
+                  style={{ background: 'linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)', color: '#FFFFFF', boxShadow: '0 4px 16px -2px rgba(139,92,246,0.4)' }}
+                >
+                  <Sparkles size={16} />
+                  AI 关键词生成
+                </button>
+              </>
             )}
-            {viewMode === 'list' ? (
-              <button 
-                onClick={handleStartCreate}
-                className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors"
-                style={{ background: 'var(--ci-accent)', color: '#FFFFFF', boxShadow: '0 4px 16px -2px rgba(79,141,246,0.35)' }}
-              >
-                <Plus size={16} />
-                创建内容
-              </button>
-            ) : (
+            {(viewMode === 'create' || viewMode === 'keyword-driven') ? (
               <button 
                 onClick={() => {
                   setViewMode('list');
@@ -742,7 +744,7 @@ export default function SocialPage() {
               >
                 返回列表
               </button>
-            )}
+            ) : null
             <button 
               onClick={loadData}
               className="p-2 text-slate-500 hover:text-[var(--ci-accent)] transition-colors"
@@ -801,7 +803,9 @@ export default function SocialPage() {
       </div>
 
       {/* Content Area */}
-      {viewMode === 'create' ? (
+      {viewMode === 'keyword-driven' ? (
+        <KeywordDrivenContentGenerator />
+      ) : viewMode === 'create' ? (
         <div className="grid grid-cols-2 gap-6">
           {/* Step 1: Create Content */}
           <div className="bg-[var(--ci-surface-strong)] rounded-xl border border-[var(--ci-border)] p-6">
