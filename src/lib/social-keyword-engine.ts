@@ -88,7 +88,7 @@ export async function extractCoreKeywords(
 
   try {
     // 1. 获取企业能力画像
-    const profile = await getCompanyProfile();
+    const profile = await getCompanyProfile(tenantId);
     
     if (!profile) {
       throw new Error("未找到企业能力画像，请先完成知识库分析");

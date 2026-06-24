@@ -64,11 +64,12 @@ type RadarSearchProfileSyncBridge = {
 
 // ==================== 获取企业能力画像 ====================
 
-export async function getCompanyProfile(): Promise<CompanyProfileData | null> {
-  const session = await getSession();
+export async function getCompanyProfile(tenantId?: string): Promise<CompanyProfileData | null> {
+  // 如果提供了 tenantId,直接使用;否则从 session 获取
+  const targetTenantId = tenantId || (await getSession()).user.tenantId;
 
   const profile = await db.companyProfile.findUnique({
-    where: { tenantId: session.user.tenantId },
+    where: { tenantId: targetTenantId },
   });
 
   if (!profile) return null;
