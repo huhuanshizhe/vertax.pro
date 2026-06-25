@@ -2178,11 +2178,16 @@ export async function getSearchComboMatrix(
     const stats = task.stats as { fetched?: number; created?: number } | null;
     const completedAt = task.completedAt?.toISOString() || '';
 
+    // 只计入单国家任务（由 runDiscoveryByCountries 创建）
+    // 多国家任务来自旧系统，适配器实际只搜了第一个国家，但 queryConfig 记录了全部
+    const effectiveCountries = taskCountries.length === 1
+      ? taskCountries
+      : []; // 忽略旧系统的多国家任务，避免虚假标记
+
     for (const kw of taskKeywords) {
-      for (const c of taskCountries) {
+      for (const c of effectiveCountries) {
         const key = `${kw.toLowerCase()}|${c}`;
         const existing = searched.get(key);
-        // 保留最新的搜索记录
         if (!existing || completedAt > existing.lastSearchedAt) {
           searched.set(key, {
             lastSearchedAt: completedAt,
