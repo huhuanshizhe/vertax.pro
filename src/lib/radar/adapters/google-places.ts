@@ -277,53 +277,67 @@ export class GooglePlacesAdapter implements RadarAdapter {
     searchText: string, 
     query: RadarSearchQuery
   ): Promise<PlaceResultNew[]> {
-    const pageSize = Math.min(query.maxResults || 20, 20); // Google max 20 per page
-    const body: SearchTextRequest = {
-      textQuery: searchText,
-      languageCode: 'en',
-      pageSize,
-    };
+    const maxResults = query.maxResults || 60;    // 我们期望的总上限
+    const perPage = 20;                            // Google 每页硬限制
+    const maxPages = Math.ceil(maxResults / perPage);
+    const allResults: PlaceResultNew[] = [];
+    let pageToken: string | undefined;
     
-    // 地区偏置
-    if (query.locationBias) {
-      body.locationBias = {
-        circle: {
-          center: {
-            latitude: query.locationBias.lat,
-            longitude: query.locationBias.lng,
-          },
-          radius: query.locationBias.radius * 1000, // km to m
-        },
+    for (let page = 0; page < maxPages; page++) {
+      const body: SearchTextRequest = {
+        textQuery: searchText,
+        languageCode: 'en',
+        pageSize: perPage,
       };
-    }
-    
-    // 国家/地区限定
-    if (query.countries?.length === 1) {
-      body.regionCode = query.countries[0].toUpperCase();
-    }
-    
-    const response = await fetch(
-      'https://places.googleapis.com/v1/places:searchText',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Goog-Api-Key': this.apiKey,
-          'X-Goog-FieldMask': SEARCH_FIELD_MASK,
-        },
-        body: JSON.stringify(body),
-        signal: AbortSignal.timeout(this.timeout),
+      
+      if (query.locationBias) {
+        body.locationBias = {
+          circle: {
+            center: { latitude: query.locationBias.lat, longitude: query.locationBias.lng },
+            radius: query.locationBias.radius * 1000,
+          },
+        };
       }
-    );
+      
+      if (query.countries?.length === 1) {
+        body.regionCode = query.countries[0].toUpperCase();
+      }
+      
+      if (pageToken) {
+        body.pageToken = pageToken;
+      }
     
-    if (!response.ok) {
-      const errText = await response.text().catch(() => '');
-      throw new Error(`Google Places API (New) error: ${response.status} - ${errText}`);
+      const response = await fetch(
+        'https://places.googleapis.com/v1/places:searchText',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': this.apiKey,
+            'X-Goog-FieldMask': SEARCH_FIELD_MASK,
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(this.timeout),
+        }
+      );
+      
+      if (!response.ok) {
+        const errText = await response.text().catch(() => '');
+        throw new Error(`Google Places API (New) error: ${response.status} - ${errText}`);
+      }
+      
+      const data: SearchTextResponse = await response.json();
+      if (data.places) allResults.push(...data.places);
+      
+      // 检查是否有下一页
+      pageToken = data.nextPageToken;
+      if (!pageToken) break; // 无下一页，提前结束
+      
+      // Google 要求翻页之间短暂等待
+      await new Promise(r => setTimeout(r, 300));
     }
     
-    const data: SearchTextResponse = await response.json();
-    
-    return data.places || [];
+    return allResults;
   }
 
   // ==================== Geocoding API ====================
