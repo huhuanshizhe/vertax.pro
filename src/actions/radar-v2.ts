@@ -2165,6 +2165,7 @@ export interface SearchComboCell {
   lastSearchedAt: string | null;
   resultCount: number;
   newCount: number;
+  searchCount: number;  // 被搜索过的轮次（每个单国家任务计 1 轮）
 }
 
 export interface SearchComboMatrix {
@@ -2219,7 +2220,7 @@ export async function getSearchComboMatrix(
   });
 
   // 从任务的 queryConfig 中提取已搜过的 (keyword, country) 组合
-  const searched = new Map<string, { lastSearchedAt: string; resultCount: number; newCount: number }>();
+  const searched = new Map<string, { lastSearchedAt: string; resultCount: number; newCount: number; searchCount: number }>();
 
   for (const task of completedTasks) {
     const config = task.queryConfig as RadarSearchQuery | null;
@@ -2231,21 +2232,22 @@ export async function getSearchComboMatrix(
     const completedAt = task.completedAt?.toISOString() || '';
 
     // 只计入单国家任务（由 runDiscoveryByCountries 创建）
-    // 多国家任务来自旧系统，适配器实际只搜了第一个国家，但 queryConfig 记录了全部
     const effectiveCountries = taskCountries.length === 1
       ? taskCountries
-      : []; // 忽略旧系统的多国家任务，避免虚假标记
+      : [];
 
     for (const kw of taskKeywords) {
       for (const c of effectiveCountries) {
         const key = `${kw.toLowerCase()}|${c}`;
         const existing = searched.get(key);
+        const newRecord = {
+          lastSearchedAt: completedAt,
+          resultCount: (existing?.resultCount || 0) + (stats?.fetched || 0),
+          newCount: (existing?.newCount || 0) + (stats?.created || 0),
+          searchCount: (existing?.searchCount || 0) + 1, // 每个匹配的 task 计一轮
+        };
         if (!existing || completedAt > existing.lastSearchedAt) {
-          searched.set(key, {
-            lastSearchedAt: completedAt,
-            resultCount: (existing?.resultCount || 0) + (stats?.fetched || 0),
-            newCount: (existing?.newCount || 0) + (stats?.created || 0),
-          });
+          searched.set(key, newRecord);
         }
       }
     }
@@ -2269,6 +2271,7 @@ export async function getSearchComboMatrix(
         lastSearchedAt: record?.lastSearchedAt || null,
         resultCount: record?.resultCount || 0,
         newCount: record?.newCount || 0,
+        searchCount: record?.searchCount || 0,
       });
     }
   }

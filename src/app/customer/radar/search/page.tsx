@@ -488,12 +488,14 @@ export default function RadarSearchPage() {
                     {comboMatrix.countries.map(c => {
                       const cell = comboMatrix.cells.find(x => x.keyword === kw && x.country === c.code);
                       const isDone = cell?.status === 'completed';
+                      const round = cell?.searchCount || 0;
+                      const roundLabels = ['','①','②','③','④','⑤'];
                       return (
                         <td key={`${kw}-${c.code}`} className="px-3 py-2.5 text-center">
                           {isDone ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700" title={`${cell!.resultCount} 条结果，${cell!.newCount} 条新增`}>
-                              <CheckCircle2 size={12} />
-                              {cell!.newCount || '✓'}
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 text-xs" title={`搜索 ${round} 轮，${cell!.resultCount} 条结果，${cell!.newCount} 条新增`}>
+                              {round > 1 ? roundLabels[Math.min(round, 5)] : <CheckCircle2 size={12} />}
+                              {cell!.newCount || ''}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-slate-300"><Circle size={12} /></span>
