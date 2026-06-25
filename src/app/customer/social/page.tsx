@@ -28,6 +28,7 @@ import {
   Upload,
   Video,
   ExternalLink,
+  Link2,
 } from 'lucide-react';
 import {
   getSocialPosts,
@@ -42,9 +43,10 @@ import { exportSocialPostsToCSV } from '@/actions/content-export';
 import { downloadCSV } from '@/lib/utils/download';
 import { getContentPieces } from '@/actions/contents';
 import KeywordDrivenContentGenerator from '@/components/keyword-driven-content-generator';
+import ProductContentGenerator from '@/components/product-content-generator';
 import { toast } from 'sonner';
 
-type ViewMode = 'list' | 'create' | 'keyword-driven';
+type ViewMode = 'list' | 'create' | 'keyword-driven' | 'product-engine';
 type CreateMode = 'ai' | 'manual';
 
 // Platform icons and info
@@ -712,6 +714,14 @@ export default function SocialPage() {
             {viewMode === 'list' && (
               <>
                 <button 
+                  onClick={() => setViewMode('product-engine')}
+                  className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors"
+                  style={{ background: 'linear-gradient(135deg, #F59E0B 0%, #EF4444 100%)', color: '#FFFFFF', boxShadow: '0 4px 16px -2px rgba(245,158,11,0.4)' }}
+                >
+                  <Link2 size={16} />
+                  产品内容引擎
+                </button>
+                <button 
                   onClick={handleExport}
                   className="px-4 py-2 rounded-xl text-sm font-medium flex items-center gap-2 transition-colors border"
                   style={{ borderColor: 'var(--ci-border)', color: 'var(--ci-text-muted)' }}
@@ -729,7 +739,7 @@ export default function SocialPage() {
                 </button>
               </>
             )}
-            {(viewMode === 'create' || viewMode === 'keyword-driven') ? (
+            {(viewMode === 'create' || viewMode === 'keyword-driven' || viewMode === 'product-engine') ? (
               <button 
                 onClick={() => {
                   setViewMode('list');
@@ -803,7 +813,9 @@ export default function SocialPage() {
       </div>
 
       {/* Content Area */}
-      {viewMode === 'keyword-driven' ? (
+      {viewMode === 'product-engine' ? (
+        <ProductContentGenerator />
+      ) : viewMode === 'keyword-driven' ? (
         <KeywordDrivenContentGenerator />
       ) : viewMode === 'create' ? (
         <div className="grid grid-cols-2 gap-6">

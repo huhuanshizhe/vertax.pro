@@ -1956,3 +1956,23 @@ model CountryLanguageLexicon {
   @@index([tenantId])
   @@map("country_language_lexicons")
 }
+
+// ==================== 社媒关键词持久化 ====================
+
+model SocialKeywordSet {
+  id       String @id @default(cuid())
+  tenantId String @unique
+
+  // 关键词数据
+  coreKeywords      Json @default("[]") // CoreKeyword[]
+  longTailKeywords  Json @default("[]") // LongTailKeyword[]
+  generatedContents Json @default("[]") // GeneratedContent[] 生成的多平台社媒内容
+
+  // 配置快照
+  config Json? // 生成时的配置 { language, platforms, tone, ... }
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("social_keyword_sets")
+}

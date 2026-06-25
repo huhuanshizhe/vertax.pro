@@ -4,31 +4,34 @@ import { auth } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { revalidatePath } from 'next/cache';
 
+// 容错包装：数据库偶发连接断开时不崩溃页面
+async function safeCall<T>(fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    console.error('[notifications] DB error, returning fallback:', (e as Error).message);
+    return fallback;
+  }
+}
+
 export async function getNotifications(limit = 20) {
   const session = await auth();
   if (!session?.user?.tenantId) return [];
 
-  return await db.notification.findMany({
-    where: {
-      tenantId: session.user.tenantId,
-    },
-    orderBy: {
-      createdAt: 'desc',
-    },
+  return safeCall(() => db.notification.findMany({
+    where: { tenantId: session.user.tenantId },
+    orderBy: { createdAt: 'desc' },
     take: limit,
-  });
+  }), []);
 }
 
 export async function getUnreadCount() {
   const session = await auth();
   if (!session?.user?.tenantId) return 0;
 
-  return await db.notification.count({
-    where: {
-      tenantId: session.user.tenantId,
-      readAt: null,
-    },
-  });
+  return safeCall(() => db.notification.count({
+    where: { tenantId: session.user.tenantId, readAt: null },
+  }), 0);
 }
 
 export async function markNotificationRead(id: string) {

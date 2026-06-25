@@ -1,5 +1,4 @@
 import type { NextAuthConfig } from "next-auth";
-import Credentials from "next-auth/providers/credentials";
 import { shouldIgnoreStaticAuthOrigin } from "@/lib/app-origin";
 
 // Cross-platform JWT configuration (shared with Vertax)
@@ -25,17 +24,7 @@ export const authConfig: NextAuthConfig = {
   pages: {
     signIn: "/login",
   },
-  providers: [
-    Credentials({
-      name: "credentials",
-      credentials: {
-        email: { label: "Email", type: "email" },
-        password: { label: "Password", type: "password" },
-      },
-      // authorize is defined in auth.ts (Node.js runtime)
-      authorize: () => null,
-    }),
-  ],
+  // providers are defined in auth.ts to avoid Edge runtime issues with Prisma
   callbacks: {
     async jwt({ token, user }) {
       if (user) {

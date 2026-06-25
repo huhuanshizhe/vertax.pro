@@ -1,7 +1,6 @@
 import { aiClient } from "@/lib/ai-client";
 import { getPlatformPrompt, getPlatformCharLimit, type PlatformId } from "@/lib/marketing/platform-rules";
-
-const isDemoMode = process.env.NEXT_PUBLIC_DEMO_MODE === "true";
+import { getLanguageInstruction } from "@/lib/languages";
 
 export type GenerateContentParams = {
   topic: string;
@@ -29,24 +28,13 @@ const TONE_INSTRUCTIONS: Record<string, string> = {
   informative: "Use an educational, informative tone that provides value to the reader.",
 };
 
-const DEMO_CONTENT: Record<string, string> = {
-  x: "🚀 Discover how our industrial solutions help manufacturers expand globally. Quality meets innovation at competitive prices. #Manufacturing #GlobalTrade",
-  facebook: "🌍 Expanding your industrial business overseas?\n\nOur comprehensive platform helps manufacturers reach global markets with:\n✅ Product catalog management\n✅ Multi-language SEO content\n✅ Social media automation\n✅ AI-powered lead generation\n\nStart your global journey today! 🚀\n\n#IndustrialExport #GlobalManufacturing #B2BMarketing",
-};
-
 export async function generateSocialContent(
   params: GenerateContentParams
 ): Promise<string> {
-  if (isDemoMode) {
-    return DEMO_CONTENT[params.platform] || DEMO_CONTENT.facebook;
-  }
-
   const platformPrompt = getPlatformPrompt(params.platform as PlatformId);
   const toneInstruction = TONE_INSTRUCTIONS[params.tone] || TONE_INSTRUCTIONS.professional;
   const charLimit = getPlatformCharLimit(params.platform as PlatformId);
-  const langInstruction = params.language === "zh-CN"
-    ? "Write the content in Chinese (简体中文)."
-    : "Write the content in English.";
+  const langInstruction = getLanguageInstruction(params.language);
 
   const userPrompt = [
     `Topic: ${params.topic}`,
@@ -77,14 +65,6 @@ export async function generateSocialContent(
 export async function generateMultiPlatformContent(
   params: GenerateMultiParams
 ): Promise<Record<string, string>> {
-  if (isDemoMode) {
-    const result: Record<string, string> = {};
-    for (const platform of params.platforms) {
-      result[platform] = DEMO_CONTENT[platform] || DEMO_CONTENT.facebook;
-    }
-    return result;
-  }
-
   const results = await Promise.all(
     params.platforms.map(async (platform) => {
       const content = await generateSocialContent({
@@ -114,24 +94,9 @@ export type GenerateAuditSummaryParams = {
   language: string;
 };
 
-const DEMO_AUDIT_SUMMARY = `## Overall Assessment
-This website has a moderate SEO foundation with several critical issues that need immediate attention. The technical basics are partially in place, but structured data and AI engine optimization are significantly lacking.
-
-## Top 3 Priorities
-1. **Fix critical on-page issues** — Ensure every page has exactly one H1 tag, proper meta descriptions, and descriptive image alt text.
-2. **Add structured data** — Implement Organization, Product, and FAQ schemas to enable rich snippets and improve AI engine understanding.
-3. **Unblock AI crawlers** — Update robots.txt to allow GPTBot, ClaudeBot, and Google-Extended to access your content.
-
-## GEO Strategy
-To improve visibility in AI-generated answers, focus on creating structured, citable content with comparison tables, FAQ sections, and authoritative author bylines. AI engines prioritize well-organized content with clear data points over generic marketing copy.`;
-
 export async function generateAuditSummary(
   params: GenerateAuditSummaryParams
 ): Promise<string> {
-  if (isDemoMode) {
-    return DEMO_AUDIT_SUMMARY;
-  }
-
   const client = aiClient;
 
   const failedFindings = params.findings
@@ -145,9 +110,7 @@ export async function generateAuditSummary(
     .join("\n");
 
   const langInstruction =
-    params.language === "zh-CN"
-      ? "Write the summary in Chinese (简体中文)."
-      : "Write the summary in English.";
+    getLanguageInstruction(params.language);
 
   const userPrompt = `Analyze the following SEO/GEO audit results for ${params.url}:
 

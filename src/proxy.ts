@@ -1,12 +1,11 @@
-import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
-import { authConfig } from "@/lib/auth.config";
+import { auth } from "@/lib/auth";
 import { ensureCronAuthorized } from "@/lib/cron-auth";
 import { isDebugEnabled } from "@/lib/debug-guard";
 import { isPlatformAdmin } from "@/lib/permissions";
 import { getTenantCanonicalRedirectUrl, normalizeHostname, resolveTenant } from "@/lib/tenant-resolver";
 
-const { auth } = NextAuth(authConfig);
+// auth is imported from @/lib/auth to avoid Edge runtime issues with Prisma
 
 const publicPaths = [
   "/login",

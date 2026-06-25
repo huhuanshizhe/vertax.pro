@@ -10,6 +10,7 @@
 
 import { getCompanyProfile } from "@/actions/knowledge";
 import { aiClient } from "@/lib/ai-client";
+import { getLanguageInstruction, DEFAULT_LANGUAGE } from "@/lib/languages";
 import type { LongTailKeyword } from "./social-keyword-engine";
 
 // ==================== 类型定义 ====================
@@ -82,7 +83,7 @@ export async function generateContentFromKeyword(
       keyword: input.keyword,
       platform: input.platform,
       tone: input.tone || "professional",
-      language: input.language || "zh-CN",
+      language: input.language || DEFAULT_LANGUAGE,
       knowledgeContext,
       platformPrompt,
       includeCTA: input.includeCTA !== false,
@@ -117,8 +118,8 @@ export async function generateContentFromKeyword(
       metadata: {
         keywordUsed: input.keyword.term,
         searchIntent: input.keyword.searchIntent || "informational",
-        contentAngle: input.keyword.contentAngle || "通用内容",
-        estimatedReadTime: Math.ceil(parsedContent.text.length / 200), // 假设200字/分钟
+        contentAngle: input.keyword.contentAngle || "General content",
+        estimatedReadTime: Math.ceil(parsedContent.text.length / 200),
       },
     };
   } catch (error) {
@@ -317,41 +318,41 @@ function findRelevantPainPoints(painPoints: any[], keyword: LongTailKeyword): an
  */
 function getPlatformSpecificPrompt(platform: string): string {
   const prompts: Record<string, string> = {
-    linkedin: `你是LinkedIn内容营销专家。创作专业、有洞察力的B2B内容。
-- 语气: 专业但不生硬
-- 结构: 开头吸引眼球,中间提供价值,结尾引导互动
-- 长度: 150-300字
-- 特色: 使用数据、案例、行业洞察增强说服力`,
+    linkedin: `You are a LinkedIn content marketing expert. Create professional, insightful B2B content.
+- Tone: Professional but not stiff
+- Structure: Hook at the start, value in the middle, engagement prompt at the end
+- Length: 150-300 words
+- Style: Use data, case studies, industry insights to strengthen credibility`,
 
-    x: `你是Twitter/X内容营销专家。创作简洁、有冲击力的短内容。
-- 语气: 直接、有力、有时幽默
-- 结构: 一句话一个观点,多用emoji和符号分隔
-- 长度: 不超过280字符
-- 特色: 制造话题性,鼓励转发`,
+    x: `You are a Twitter/X content marketing expert. Create concise, impactful short content.
+- Tone: Direct, powerful, occasionally humorous
+- Structure: One point per sentence, use emoji and symbols as separators
+- Length: Max 280 characters
+- Style: Create shareable, conversation-starting content`,
 
-    facebook: `你是Facebook内容营销专家。创作亲切、易传播的内容。
-- 语气: 友好、亲和、故事化
-- 结构: 故事引入 → 价值展示 → 行动号召
-- 长度: 100-250字
-- 特色: 多用emoji,强调社区感和信任`,
+    facebook: `You are a Facebook content marketing expert. Create warm, shareable content.
+- Tone: Friendly, approachable, storytelling
+- Structure: Story hook → Value showcase → Call to action
+- Length: 100-250 words
+- Style: Use emoji, emphasize community and trust`,
 
-    instagram: `你是Instagram内容营销专家。创作文案配合视觉内容。
-- 语气: 灵感性、视觉化、情感驱动
-- 结构: 简短有力的文案 + 大量相关hashtag
-- 长度: 50-150字
-- 特色: 强调美学和生活方式`,
+    instagram: `You are an Instagram content marketing expert. Create copy that complements visual content.
+- Tone: Inspirational, visual, emotion-driven
+- Structure: Short powerful copy + abundant relevant hashtags
+- Length: 50-150 words
+- Style: Emphasize aesthetics and lifestyle`,
 
-    tiktok: `你是TikTok内容营销专家。创作年轻化、娱乐化的短视频文案。
-- 语气: 活泼、有趣、接地气
-- 结构: 前3秒抓住注意力,快速传递核心价值
-- 长度: 50-100字
-- 特色: 使用流行语、挑战、趋势元素`,
+    tiktok: `You are a TikTok content marketing expert. Create youthful, entertaining short-video copy.
+- Tone: Lively, fun, relatable
+- Structure: Grab attention in first 3 seconds, deliver core value quickly
+- Length: 50-100 words
+- Style: Use trending language, challenges, trending elements`,
 
-    wechat: `你是微信公众号内容营销专家。创作深度、有价值的内容。
-- 语气: 专业、权威、有温度
-- 结构: 标题党但内容扎实,段落清晰
-- 长度: 200-500字(摘要)
-- 特色: 结合热点,提供实用价值`,
+    wechat: `You are a WeChat Official Account content marketing expert. Create in-depth, valuable content.
+- Tone: Professional, authoritative, warm
+- Structure: Attention-grabbing headline + substantial content, clear paragraphs
+- Length: 200-500 words (summary)
+- Style: Connect with trending topics, provide practical value`,
   };
 
   return prompts[platform] || prompts.linkedin;
@@ -373,51 +374,56 @@ function buildContentGenerationPrompt(params: {
   const { keyword, platform, tone, language, knowledgeContext, platformPrompt, includeCTA, includeHashtags } = params;
 
   const ctaInstruction = includeCTA
-    ? "\n【行动号召】在文末添加自然的CTA,引导用户点击链接、评论或私信"
+    ? "\n[CTA] Add a natural call-to-action at the end, guiding users to click links, comment, or DM"
     : "";
 
   const hashtagInstruction = includeHashtags
-    ? `\n【话题标签】添加3-5个相关的hashtag,包括:#${keyword.term.replace(/\s+/g, "")} 和其他相关标签`
+    ? `\n[Hashtags] Add 3-5 relevant hashtags, including: #${keyword.term.replace(/\s+/g, "")} and other related tags`
     : "";
 
   const toneMap: Record<string, string> = {
-    professional: "专业、权威",
-    casual: "轻松、友好",
-    humorous: "幽默、风趣",
-    informative: "教育性、信息丰富",
-    inspirational: "激励性、启发性",
+    professional: "Professional, authoritative",
+    casual: "Casual, friendly",
+    humorous: "Humorous, witty",
+    informative: "Educational, informative",
+    inspirational: "Inspirational, motivating",
   };
 
-  return `请基于以下信息创作社媒内容:
+  return `${getLanguageInstruction(language)}
 
-【核心关键词】${keyword.term}
-【搜索意图】${keyword.searchIntent || "informational"}
-【内容角度】${keyword.contentAngle || "通用内容"}
-【目标平台】${platform}
-【语气风格】${toneMap[tone] || "专业"}
-【语言】${language === "zh-CN" ? "简体中文" : "English"}${ctaInstruction}${hashtagInstruction}
+IMPORTANT: You MUST write ALL content in the target language specified above. Translate all concepts as needed.
 
-【企业知识库上下文】
+Create social media content based on the following information:
+
+[Core Keyword] ${keyword.term}
+[Search Intent] ${keyword.searchIntent || "informational"}
+[Content Angle] ${keyword.contentAngle || "General content"}
+[Target Platform] ${platform}
+[Tone] ${toneMap[tone] || "Professional"}${ctaInstruction}${hashtagInstruction}
+
+[Company Knowledge Base]
 ${knowledgeContext}
 
-【平台创作指南】
+[Platform Guidelines]
 ${platformPrompt}
 
-【输出格式】
-请以JSON格式输出,包含以下字段:
+[Output Format]
+Output JSON format with the following fields:
 {
-  "text": "主文案内容",
-  "hashtags": ["标签1", "标签2", "标签3"],
-  "cta": "行动号召文本(可选)",
-  "imageSuggestion": "配图建议描述"
+  "text": "Main post content",
+  "hashtags": ["tag1", "tag2", "tag3"],
+  "cta": "Call to action text (optional)",
+  "imageSuggestion": "Image suggestion description"
 }
 
-确保内容:
-1. 自然融入关键词"${keyword.term}"
-2. 体现企业的专业能力和优势
-3. 符合${platform}平台的用户习惯
-4. 有明确的价值和吸引力
-5. 避免硬销售,注重价值传递`;
+Ensure the content:
+1. Naturally incorporates the keyword "${keyword.term}"
+2. Reflects the company's professional capabilities and advantages
+3. Matches ${platform} platform user habits
+4. Has clear value and appeal
+5. Avoids hard selling, focuses on value delivery
+
+REMINDER: Output in the target language specified at the top.`;
 }
 
 /**
@@ -426,10 +432,10 @@ ${platformPrompt}
 function generateImagePrompt(keyword: LongTailKeyword, contentText: string): string {
   const keywordTerm = keyword.term;
   
-  // 提取内容中的关键概念
+  // Extract key concepts from the content
   const concepts = extractKeyConcepts(contentText);
   
-  return `一张专业的商业图片,主题围绕"${keywordTerm}",包含以下元素:${concepts.join(", ")},高质量,现代风格,适合社媒营销使用`;
+  return `A professional business image themed around "${keywordTerm}", incorporating elements: ${concepts.join(", ")}, high quality, modern style, suitable for social media marketing`;
 }
 
 /**
@@ -461,20 +467,20 @@ function parseGeneratedContent(
         metadata: {
           keywordUsed: input.keyword.term,
           searchIntent: input.keyword.searchIntent || "informational",
-          contentAngle: input.keyword.contentAngle || "通用内容",
+          contentAngle: input.keyword.contentAngle || "General content",
           estimatedReadTime: Math.ceil((data.text || rawContent).length / 200),
         },
       };
     }
 
-    // 如果不是JSON格式,直接返回原文
+    // If not JSON format, return raw text
     return {
       text: rawContent,
       hashtags: [],
       metadata: {
         keywordUsed: input.keyword.term,
         searchIntent: input.keyword.searchIntent || "informational",
-        contentAngle: input.keyword.contentAngle || "通用内容",
+        contentAngle: input.keyword.contentAngle || "General content",
         estimatedReadTime: Math.ceil(rawContent.length / 200),
       },
     };
@@ -486,7 +492,7 @@ function parseGeneratedContent(
       metadata: {
         keywordUsed: input.keyword.term,
         searchIntent: input.keyword.searchIntent || "informational",
-        contentAngle: input.keyword.contentAngle || "通用内容",
+        contentAngle: input.keyword.contentAngle || "General content",
         estimatedReadTime: Math.ceil(rawContent.length / 200),
       },
     };
@@ -495,19 +501,21 @@ function parseGeneratedContent(
 
 // ==================== AI系统提示词 ====================
 
-const CONTENT_GENERATION_SYSTEM_PROMPT = `你是一位资深的社媒内容营销专家,擅长为不同平台创作高 engagement 的内容。
+const CONTENT_GENERATION_SYSTEM_PROMPT = `You are a multilingual social media content marketing expert, skilled at creating high-engagement content for different platforms in multiple languages.
 
-核心原则:
-1. **价值优先**: 每条内容都要为受众提供明确价值
-2. **自然融合**: 巧妙融入关键词,不生硬堆砌
-3. **品牌一致**: 体现企业专业形象,保持语调一致
-4. **平台适配**: 深度理解各平台的算法和用户行为
-5. **行动导向**: 设计清晰的CTA,引导用户下一步动作
+CRITICAL LANGUAGE RULE: You MUST generate content in the EXACT target language specified by the user. If the input data contains Chinese text, translate concepts to the target language. NEVER output Chinese unless the target language is explicitly Chinese.
 
-内容质量标准:
-- 原创性: 避免模板化,每个内容都要有独特视角
-- 可读性: 段落清晰,适当使用emoji和格式化
-- 互动性: 设计能引发评论、分享的话题点
-- SEO友好: 自然融入关键词和相关术语
+Core Principles:
+1. **Value First**: Every piece of content must provide clear value to the audience
+2. **Natural Integration**: Skillfully incorporate keywords without forcing them
+3. **Brand Consistency**: Reflect the company's professional image, maintain consistent tone
+4. **Platform Adaptation**: Deeply understand each platform's algorithm and user behavior
+5. **Action-Oriented**: Design clear CTAs that guide users to the next step
 
-你必须严格遵循用户提供的输出格式,不要添加额外解释。`;
+Content Quality Standards:
+- Originality: Avoid templates, each content piece should have a unique perspective
+- Readability: Clear paragraphs, appropriate use of emoji and formatting
+- Engagement: Design talking points that spark comments and shares
+- SEO Friendly: Naturally incorporate keywords and related terms
+
+You must strictly follow the output format provided by the user. Do not add extra explanations.`;

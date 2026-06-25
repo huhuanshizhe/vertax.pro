@@ -10,6 +10,7 @@
 
 import { getCompanyProfile } from "@/actions/knowledge";
 import { aiClient } from "@/lib/ai-client";
+import { getLanguageInstruction, DEFAULT_LANGUAGE } from "@/lib/languages";
 
 // ==================== 类型定义 ====================
 
@@ -78,12 +79,14 @@ export async function extractCoreKeywords(
     maxKeywords?: number;        // 最大关键词数量
     minSearchVolume?: number;    // 最小搜索量阈值
     categories?: KeywordCategory[]; // 指定类别
+    language?: string;           // 目标语言 (如 en, zh-CN, ja 等)
   } = {}
 ): Promise<CoreKeyword[]> {
   const {
     maxKeywords = 30,
     minSearchVolume = 50,
     categories = ["product", "technology", "industry", "scenario", "pain_point", "differentiator"],
+    language = DEFAULT_LANGUAGE,
   } = options;
 
   try {
@@ -99,6 +102,7 @@ export async function extractCoreKeywords(
       maxKeywords,
       minSearchVolume,
       categories,
+      language,
     });
 
     // 3. 调用 AI 模型
@@ -109,7 +113,7 @@ export async function extractCoreKeywords(
         { role: "user", content: prompt },
       ],
       temperature: 0.3,
-      max_tokens: 2000,
+      max_tokens: 8000,
     });
 
     const content = response.choices[0]?.message?.content;
@@ -159,12 +163,14 @@ export async function expandLongTailKeywords(
     maxPerCore?: number;       // 每个核心词裂变数量
     targetRegion?: string;     // 目标地区
     targetIndustries?: string[]; // 目标行业列表
+    language?: string;         // 目标语言
   } = {}
 ): Promise<LongTailKeyword[]> {
   const {
     maxPerCore = 10,
-    targetRegion = "中国",
+    targetRegion,
     targetIndustries = [],
+    language = DEFAULT_LANGUAGE,
   } = options;
 
   const allLongTailKeywords: LongTailKeyword[] = [];
@@ -176,6 +182,7 @@ export async function expandLongTailKeywords(
         maxPerCore,
         targetRegion,
         targetIndustries,
+        language,
       });
 
       const response = await aiClient.chat.completions.create({
@@ -185,7 +192,7 @@ export async function expandLongTailKeywords(
           { role: "user", content: expansionPrompt },
         ],
         temperature: 0.7,
-        max_tokens: 3000,
+        max_tokens: 8000,
       });
 
       const content = response.choices[0]?.message?.content;
@@ -234,6 +241,7 @@ export async function runKeywordExpansionPipeline(
     minSearchVolume?: number;
     targetRegion?: string;
     targetIndustries?: string[];
+    language?: string;
   } = {}
 ): Promise<KeywordExpansionResult> {
   const {
@@ -242,6 +250,7 @@ export async function runKeywordExpansionPipeline(
     minSearchVolume = 50,
     targetRegion,
     targetIndustries,
+    language = DEFAULT_LANGUAGE,
   } = options;
 
   console.log("[Keyword Pipeline] Step 1: Extracting core keywords...");
@@ -250,6 +259,7 @@ export async function runKeywordExpansionPipeline(
   const coreKeywords = await extractCoreKeywords(tenantId, {
     maxKeywords: maxCoreKeywords,
     minSearchVolume,
+    language,
   });
 
   console.log(`[Keyword Pipeline] Extracted ${coreKeywords.length} core keywords`);
@@ -261,6 +271,7 @@ export async function runKeywordExpansionPipeline(
     maxPerCore: maxLongTailPerCore,
     targetRegion,
     targetIndustries,
+    language,
   });
 
   console.log(`[Keyword Pipeline] Generated ${longTailKeywords.length} long-tail keywords`);
@@ -318,19 +329,19 @@ function calculateKeywordStats(
   longTailKeywords: LongTailKeyword[]
 ) {
   const allKeywords = [...coreKeywords, ...longTailKeywords];
-  const avgSearchVolume =
-    allKeywords.reduce((sum, kw) => sum + kw.metrics.searchVolume, 0) /
-    allKeywords.length;
+  const avgSearchVolume = allKeywords.length > 0
+    ? Math.round(allKeywords.reduce((sum, kw) => sum + kw.metrics.searchVolume, 0) / allKeywords.length)
+    : 0;
 
   const highValueKeywords = allKeywords.filter((kw) => {
     const score = calculateKeywordScore(kw);
-    return score >= 0.7; // 高分值关键词
+    return score >= 0.7;
   }).length;
 
   return {
     totalCoreKeywords: coreKeywords.length,
     totalLongTailKeywords: longTailKeywords.length,
-    avgSearchVolume: Math.round(avgSearchVolume),
+    avgSearchVolume,
     highValueKeywords,
   };
 }
@@ -364,15 +375,15 @@ function suggestContentAngle(
   
   switch (intent) {
     case "informational":
-      return `教育性内容: 解释"${longTail.term}"的概念和价值`;
+      return `Educational content: Explaining the concept and value of "${longTail.term}"`;
     case "commercial":
-      return `对比性内容: 比较不同解决方案的优劣`;
+      return `Comparison content: Comparing different solutions for "${longTail.term}"`;
     case "transactional":
-      return `转化性内容: 展示产品如何解决具体问题`;
+      return `Conversion content: Showing how products solve the problem of "${longTail.term}"`;
     case "navigational":
-      return `引导性内容: 帮助用户找到所需资源`;
+      return `Guide content: Helping users find resources related to "${longTail.term}"`;
     default:
-      return `围绕"${core.term}"创作有价值的内容`;
+      return `Content centered around "${core.term}"`;
   }
 }
 
@@ -421,51 +432,67 @@ function classifySearchIntent(term: string): LongTailKeyword["searchIntent"] {
 
 // ==================== AI 提示词 ====================
 
-const KEYWORD_EXTRACTION_SYSTEM_PROMPT = `你是一位专业的SEO和内容营销专家。你的任务是从企业知识库中提炼高价值的关键词。
+const KEYWORD_EXTRACTION_SYSTEM_PROMPT = `You are a professional multilingual SEO and content marketing expert. Your task is to extract high-value keywords from the company knowledge base.
 
-要求:
-1. 关键词必须有较高的搜索量(至少50+月搜索量)
-2. 关键词必须与企业业务高度相关
-3. 关键词应该有明确的商业意图
-4. 避免过于宽泛或竞争过大的通用词
-5. 优先选择长尾词和细分领域词
+CRITICAL RULES:
+1. The input company data may be in Chinese or other languages — IGNORE the input language.
+2. ALL keyword output MUST be in the EXACT target language specified by the user.
+3. If the target is English, translate all concepts to English keywords.
+4. If the target is Japanese, generate keywords in Japanese (日本語).
+5. NEVER output Chinese keywords unless the target language is explicitly Chinese.
+6. Keywords must have decent search volume (at least 50+ monthly searches)
+7. Keywords must be highly relevant to the company's business
+8. Keywords should have clear commercial intent
+9. Avoid overly broad or highly competitive generic terms
+10. Prioritize long-tail and niche keywords
 
-输出格式必须是JSON数组,每个元素包含:
+Output format must be a JSON array, each element containing:
 {
-  "term": "关键词文本",
+  "term": "keyword text (MUST be in the target language, NOT Chinese)",
   "category": "product|technology|industry|scenario|pain_point|differentiator|region",
-  "searchVolume": 数字(月搜索量估算),
+  "searchVolume": number (estimated monthly searches),
   "competition": "low|medium|high",
-  "commercialIntent": 0-1之间的数字,
-  "relevance": 0-1之间的数字,
-  "confidence": 0-1之间的数字
-}`;
+  "commercialIntent": number between 0-1,
+  "relevance": number between 0-1,
+  "confidence": number between 0-1
+}
 
-const LONG_TAIL_EXPANSION_SYSTEM_PROMPT = `你是一位专业的长尾关键词研究专家。基于给定的核心关键词,裂变出相关的长尾关键词。
+REMINDER: Output language = target language specified by user. NOT Chinese (unless target is Chinese).`;
 
-裂变策略:
-1. 问题型: "如何...", "什么是...", "为什么..."
-2. 比较型: "... vs ...", "... 哪个更好", "最佳..."
-3. 场景型: "[行业] + [核心词]", "[场景] + [核心词]"
-4. 地域型: "[城市] + [核心词]"
-5. 购买型: "购买...", "... 价格", "... 多少钱"
+const LONG_TAIL_EXPANSION_SYSTEM_PROMPT = `You are a professional multilingual long-tail keyword research expert. Based on the given core keywords, expand them into related long-tail keywords.
 
-要求:
-1. 每个核心词裂变8-15个长尾词
-2. 保持语义相关性和商业价值
-3. 覆盖不同的搜索意图
-4. 避免重复和过于相似的词
+CRITICAL RULES:
+1. The input keywords may be in any language — IGNORE the input language.
+2. ALL output MUST be in the EXACT target language specified by the user.
+3. If target is English, generate English long-tail keywords.
+4. If target is Japanese, generate Japanese (日本語) long-tail keywords.
+5. NEVER output Chinese unless the target language is explicitly Chinese.
 
-输出格式必须是JSON数组,每个元素包含:
+Expansion strategies (apply in the target language):
+1. Question-type: "how to...", "what is...", "why..." (translated to target language)
+2. Comparison-type: "... vs ...", "which is better...", "best..." (translated to target language)
+3. Scenario-type: "[industry] + [core keyword]" (translated to target language)
+4. Location-type: "[city/region] + [core keyword]" (translated to target language)
+5. Purchase-type: "buy...", "... price", "... cost" (translated to target language)
+
+Requirements:
+1. Expand 8-15 long-tail keywords per core keyword
+2. Maintain semantic relevance and commercial value
+3. Cover different search intents
+4. Avoid duplicate or overly similar terms
+
+Output format must be a JSON array, each element containing:
 {
-  "term": "长尾词文本",
+  "term": "long-tail keyword text (MUST be in the target language, NOT Chinese)",
   "category": "product|technology|industry|scenario|pain_point|differentiator|region",
-  "searchVolume": 数字(月搜索量估算),
+  "searchVolume": number (estimated monthly searches),
   "competition": "low|medium|high",
-  "commercialIntent": 0-1之间的数字,
-  "relevance": 0-1之间的数字,
-  "confidence": 0-1之间的数字
-}`;
+  "commercialIntent": number between 0-1,
+  "relevance": number between 0-1,
+  "confidence": number between 0-1
+}
+
+REMINDER: Output language = target language specified by user. NOT Chinese (unless target is Chinese).`;
 
 // ==================== 提示词构建器 ====================
 
@@ -475,23 +502,31 @@ function buildKeywordExtractionPrompt(
     maxKeywords: number;
     minSearchVolume: number;
     categories: KeywordCategory[];
+    language: string;
   }
 ): string {
-  return `请分析以下企业能力画像,提取${options.maxKeywords}个高价值关键词。
+  const langInstruction = getLanguageInstruction(options.language);
 
-企业信息:
-- 主营业务: ${profile.businessOverview?.description || "N/A"}
-- 核心产品: ${(profile.products || []).map((p: any) => p.name).join(", ") || "N/A"}
-- 技术优势: ${(profile.technologies || []).map((t: any) => t.name).join(", ") || "N/A"}
-- 目标行业: ${(profile.targetIndustries || []).map((i: any) => i.name).join(", ") || "N/A"}
-- 应用场景: ${(profile.useCases || []).map((u: any) => u.title).join(", ") || "N/A"}
-- 客户痛点: ${(profile.painPoints || []).map((p: any) => p.description).join(", ") || "N/A"}
-- 差异化卖点: ${(profile.differentiators || []).map((d: any) => d.value).join(", ") || "N/A"}
+  return `${langInstruction}
 
-要求:
-- 最小搜索量: ${options.minSearchVolume}
-- 关键词类别: ${options.categories.join(", ")}
-- 输出JSON格式数组`;
+IMPORTANT: The company data below may contain Chinese text. You MUST translate all concepts and generate keywords in the target language specified above. DO NOT output Chinese keywords.
+
+Analyze the following company profile and extract ${options.maxKeywords} high-value keywords.
+
+Company Information:
+- Main Business: ${profile.businessOverview?.description || "N/A"}
+- Core Products: ${(profile.products || []).map((p: any) => p.name).join(", ") || "N/A"}
+- Technology Advantages: ${(profile.technologies || []).map((t: any) => t.name).join(", ") || "N/A"}
+- Target Industries: ${(profile.targetIndustries || []).map((i: any) => i.name).join(", ") || "N/A"}
+- Use Cases: ${(profile.useCases || []).map((u: any) => u.title).join(", ") || "N/A"}
+- Customer Pain Points: ${(profile.painPoints || []).map((p: any) => p.description).join(", ") || "N/A"}
+- Differentiators: ${(profile.differentiators || []).map((d: any) => d.value).join(", ") || "N/A"}
+
+Requirements:
+- Minimum search volume: ${options.minSearchVolume}
+- Keyword categories: ${options.categories.join(", ")}
+- Output JSON array format
+- REMINDER: All keyword terms MUST be in the target language. Translate from Chinese if needed.`;
 }
 
 function buildLongTailExpansionPrompt(
@@ -500,57 +535,97 @@ function buildLongTailExpansionPrompt(
     maxPerCore: number;
     targetRegion?: string;
     targetIndustries?: string[];
+    language: string;
   }
 ): string {
+  const langInstruction = getLanguageInstruction(options.language);
+
   const industriesContext = options.targetIndustries?.length
-    ? `\n目标行业: ${options.targetIndustries.join(", ")}`
+    ? `\nTarget Industries: ${options.targetIndustries.join(", ")}`
     : "";
 
   const regionContext = options.targetRegion
-    ? `\n目标地区: ${options.targetRegion}`
+    ? `\nTarget Region: ${options.targetRegion}`
     : "";
 
-  return `基于核心关键词"${coreKeyword.term}",裂变出${options.maxPerCore}个相关的长尾关键词。
+  return `${langInstruction}
 
-核心词信息:
-- 类别: ${coreKeyword.category}
-- 搜索量: ${coreKeyword.metrics.searchVolume}
-- 竞争程度: ${coreKeyword.metrics.competition}
-- 商业意图: ${coreKeyword.metrics.commercialIntent}${industriesContext}${regionContext}
+IMPORTANT: The core keyword below may be in a different language. You MUST generate all long-tail keywords in the target language specified above. Translate if necessary.
 
-请使用多样化的裂变策略,覆盖问题型、比较型、场景型、地域型和购买型长尾词。
+Based on the core keyword "${coreKeyword.term}", expand it into ${options.maxPerCore} related long-tail keywords.
 
-输出JSON格式数组。`;
+Core Keyword Info:
+- Category: ${coreKeyword.category}
+- Search Volume: ${coreKeyword.metrics.searchVolume}
+- Competition: ${coreKeyword.metrics.competition}
+- Commercial Intent: ${coreKeyword.metrics.commercialIntent}${industriesContext}${regionContext}
+
+Use diverse expansion strategies, covering question-type, comparison-type, scenario-type, location-type, and purchase-type long-tail keywords — all in the target language.
+
+Output JSON array format.
+REMINDER: All keyword terms MUST be in the target language specified above.`;
 }
 
 // ==================== 响应解析器 ====================
 
 function parseKeywordResponse(content: string): CoreKeyword[] {
   try {
-    // 尝试提取 JSON
+    // 尝试提取完整 JSON 数组
     const jsonMatch = content.match(/\[[\s\S]*\]/);
-    if (!jsonMatch) {
-      throw new Error("无法解析JSON数组");
+    if (jsonMatch) {
+      try {
+        const data = JSON.parse(jsonMatch[0]);
+        return mapToCoreKeywords(data);
+      } catch {
+        // JSON 可能被截断，尝试容错解析
+      }
     }
 
-    const data = JSON.parse(jsonMatch[0]);
+    // 容错：尝试修复截断的 JSON
+    const truncated = tryFixTruncatedJson(content);
+    if (truncated) {
+      return mapToCoreKeywords(truncated);
+    }
 
-    return data.map((item: any, index: number) => ({
-      id: `kw-core-${index}-${Date.now()}`,
-      term: item.term,
-      category: item.category as KeywordCategory,
-      metrics: {
-        searchVolume: Number(item.searchVolume) || 100,
-        competition: item.competition || "medium",
-        commercialIntent: Number(item.commercialIntent) || 0.5,
-        relevance: Number(item.relevance) || 0.7,
-      },
-      confidence: Number(item.confidence) || 0.8,
-    }));
+    throw new Error("无法解析JSON数组");
   } catch (error) {
     console.error("[parseKeywordResponse] Error:", error);
-    console.error("Raw content:", content);
+    console.error("Raw content:", content.slice(0, 500));
     return [];
+  }
+}
+
+function mapToCoreKeywords(data: any[]): CoreKeyword[] {
+  return data.map((item: any, index: number) => ({
+    id: `kw-core-${index}-${Date.now()}`,
+    term: item.term,
+    category: item.category as KeywordCategory,
+    metrics: {
+      searchVolume: Number(item.searchVolume) || 100,
+      competition: item.competition || "medium",
+      commercialIntent: Number(item.commercialIntent) || 0.5,
+      relevance: Number(item.relevance) || 0.7,
+    },
+    confidence: Number(item.confidence) || 0.8,
+  }));
+}
+
+function tryFixTruncatedJson(content: string): any[] | null {
+  // 如果 JSON 被截断，缺少结尾的 ]}，尝试补全
+  const lastBrace = content.lastIndexOf("{");
+  if (lastBrace < 0) return null;
+
+  // 找到最后一个完整的对象：从最后一个 { 向前找最近的 ,
+  const beforeLast = content.lastIndexOf(",", lastBrace);
+  if (beforeLast < 0) return null;
+
+  const fixed = content.slice(0, beforeLast) + "]";
+  try {
+    const jsonMatch = fixed.match(/\[[\s\S]*\]/);
+    if (!jsonMatch) return null;
+    return JSON.parse(jsonMatch[0]);
+  } catch {
+    return null;
   }
 }
 

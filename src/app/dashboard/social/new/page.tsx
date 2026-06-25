@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Sparkles, Loader2, Send, Save } from "lucide-react";
 import { generateAIContent, createSocialPost, publishSocialPost, scheduleSocialPost } from "@/actions/social";
 import { toast } from "sonner";
+import { SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE } from "@/lib/languages";
 
 export default function NewSocialPage() {
   const router = useRouter();
@@ -37,7 +38,7 @@ export default function NewSocialPage() {
   const [aiTopic, setAiTopic] = useState("");
   const [aiContext, setAiContext] = useState("");
   const [aiTone, setAiTone] = useState("professional");
-  const [aiLanguage, setAiLanguage] = useState("en");
+  const [aiLanguage, setAiLanguage] = useState(DEFAULT_LANGUAGE);
   const [generating, setGenerating] = useState(false);
   const [showAiPanel, setShowAiPanel] = useState(false);
 
@@ -375,9 +376,12 @@ export default function NewSocialPage() {
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="en">English</SelectItem>
-                    <SelectItem value="zh-CN">中文</SelectItem>
+                  <SelectContent className="max-h-[280px]">
+                    {SUPPORTED_LANGUAGES.map((lang) => (
+                      <SelectItem key={lang.code} value={lang.code}>
+                        {lang.nativeName} ({lang.name})
+                      </SelectItem>
+                    ))}
                   </SelectContent>
                 </Select>
               </div>

@@ -174,14 +174,18 @@ async function main() {
   }
 
   // Create website config for test tenant
-  await prisma.websiteConfig.upsert({
+  const existingWebsiteConfig = await prisma.websiteConfig.findFirst({
     where: { tenantId: testTenant.id },
-    update: {},
-    create: {
-      tenantId: testTenant.id,
-      url: "https://demo-company.example.com",
-    },
   });
+
+  if (!existingWebsiteConfig) {
+    await prisma.websiteConfig.create({
+      data: {
+        tenantId: testTenant.id,
+        url: "https://demo-company.example.com",
+      },
+    });
+  }
 
   // ==================== TDPaint 租户配置 ====================
 

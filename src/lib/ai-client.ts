@@ -23,6 +23,9 @@ const DEFAULT_CODING_DASHSCOPE_BASE_URL =
 const CODING_DASHSCOPE_HOST = "coding.dashscope.aliyuncs.com";
 const DEFAULT_CODING_MODEL = "qwen3-coder-plus";
 
+// DeepSeek
+const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1/chat/completions";
+
 function getDashScopeBaseUrl(apiKey?: string): string {
   const configuredBaseUrl = process.env.DASHSCOPE_BASE_URL?.trim();
   if (configuredBaseUrl) {
@@ -169,10 +172,10 @@ function execCurl(args: string[], timeoutMs: number): Promise<{ stdout: string; 
  */
 async function chatCompletionViaFetch(
   apiKey: string,
+  baseUrl: string,
   messages: ChatMessage[],
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResponse> {
-  const baseUrl = getDashScopeBaseUrl(apiKey);
   const {
     temperature = 0.3,
     maxTokens = 4096,
@@ -250,10 +253,10 @@ async function chatCompletionViaFetch(
  */
 async function chatCompletionViaCurl(
   apiKey: string,
+  baseUrl: string,
   messages: ChatMessage[],
   options: ChatCompletionOptions
 ): Promise<ChatCompletionResponse> {
-  const baseUrl = getDashScopeBaseUrl(apiKey);
   const {
     temperature = 0.3,
     maxTokens = 4096,
@@ -342,16 +345,34 @@ export async function chatCompletion(
   messages: ChatMessage[],
   options: ChatCompletionOptions = {}
 ): Promise<ChatCompletionResponse> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
-  if (!apiKey) {
-    throw new Error("DASHSCOPE_API_KEY is not configured");
+  let model = options.model || process.env.AI_MODEL || "deepseek-chat";
+
+  // Auto-remap qwen models to DeepSeek when DashScope key is a placeholder
+  const isQwenModel = (model || "").startsWith("qwen");
+  const dashScopeKey = process.env.DASHSCOPE_API_KEY;
+  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
+  const isDashScopePlaceholder = !dashScopeKey || dashScopeKey.startsWith("sk-placeholder");
+
+  if (isQwenModel && isDashScopePlaceholder && deepSeekKey) {
+    console.log(`[chatCompletion] Auto-remapping ${model} -> deepseek-v4-pro (DashScope key is placeholder)`);
+    model = process.env.AI_MODEL || "deepseek-chat";
   }
+
+  const isDeepSeek = (model || "").toLowerCase().startsWith("deepseek");
+  const apiKey = isDeepSeek ? deepSeekKey : dashScopeKey;
+  const baseUrl = isDeepSeek ? DEEPSEEK_BASE_URL : getDashScopeBaseUrl(apiKey);
+
+  if (!apiKey) {
+    throw new Error(isDeepSeek ? "DEEPSEEK_API_KEY is not configured" : "DASHSCOPE_API_KEY is not configured");
+  }
+
+  const resolvedOptions = { ...options, model };
 
   if (process.env.VERCEL) {
-    return chatCompletionViaFetch(apiKey, messages, options);
+    return chatCompletionViaFetch(apiKey, baseUrl, messages, resolvedOptions);
   }
 
-  return chatCompletionViaCurl(apiKey, messages, options);
+  return chatCompletionViaCurl(apiKey, baseUrl, messages, resolvedOptions);
 }
 
 /**
@@ -607,22 +628,34 @@ export function createStreamingResponse(
   messages: ChatMessage[],
   options: ChatCompletionOptions = {}
 ): Response {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  let model = options.model || process.env.AI_MODEL || "deepseek-chat";
+
+  // Auto-remap qwen models to DeepSeek
+  const isQwenModel = (model || "").startsWith("qwen");
+  const dashScopeKey = process.env.DASHSCOPE_API_KEY;
+  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
+  const isDashScopePlaceholder = !dashScopeKey || dashScopeKey.startsWith("sk-placeholder");
+  if (isQwenModel && isDashScopePlaceholder && deepSeekKey) {
+    model = process.env.AI_MODEL || "deepseek-chat";
+  }
+
+  const isDeepSeek = (model || "").toLowerCase().startsWith("deepseek");
+  const apiKey = isDeepSeek ? deepSeekKey : dashScopeKey;
+  const baseUrl = isDeepSeek ? DEEPSEEK_BASE_URL : getDashScopeBaseUrl(apiKey);
+
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "DASHSCOPE_API_KEY is not configured" }), {
+    return new Response(JSON.stringify({ error: "API key not configured" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
-
-  const baseUrl = getDashScopeBaseUrl(apiKey);
   const {
     temperature = 0.3,
     maxTokens = 4096,
     topP = 0.8,
     timeout = 300,
   } = options;
-  const model = resolveModel(options.model, apiKey);
+  const resolvedModel = resolveModel(model, apiKey);
 
   // 构建实时流
   const stream = new ReadableStream({
@@ -640,7 +673,7 @@ export function createStreamingResponse(
 
       // 构建请求体
       const requestBody = JSON.stringify({
-        model,
+        model: resolvedModel,
         messages,
         temperature,
         max_tokens: maxTokens,
@@ -652,7 +685,7 @@ export function createStreamingResponse(
       const tmpFile = join(tmpdir(), `dashscope-realtime-${ts}-${Math.random().toString(36).slice(2, 8)}.json`);
       writeFileSync(tmpFile, requestBody, "utf-8");
 
-      console.log(`[realtime streaming] curl+stream, model=${model}, maxTokens=${maxTokens}`);
+      console.log(`[realtime streaming] curl+stream, model=${resolvedModel}, maxTokens=${maxTokens}`);
 
       // 使用 --no-buffer 实现实时流
       const proc = spawn("curl", [
@@ -669,7 +702,7 @@ export function createStreamingResponse(
       });
 
       let fullContent = "";
-      let finalModel = model;
+      let finalModel = resolvedModel;
       let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
       let settled = false;
 
