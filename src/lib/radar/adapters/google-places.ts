@@ -1,5 +1,10 @@
-// ==================== Google Places Adapter ====================
-// Google Maps Places API 适配器，用于发现目标公司
+// ==================== Google Places Adapter (New API v1) ====================
+// Google Maps Places API (New) + Geocoding API 适配器，用于发现目标公司
+//
+// 使用新版 Places API v1:
+// - SearchText: POST https://places.googleapis.com/v1/places:searchText
+// - Place Details: GET https://places.googleapis.com/v1/places/{place_id}
+// - Geocoding: GET https://maps.googleapis.com/maps/api/geocode/json
 
 import type { 
   RadarAdapter, 
@@ -12,46 +17,123 @@ import type {
 } from './types';
 import { getCountryDisplayName } from '../country-utils';
 
-// ==================== Google Places API 类型 ====================
+// ==================== Places API (New) 类型 ====================
 
-interface PlaceResult {
+interface PlacesApiText {
+  text: string;
+  languageCode?: string;
+}
+
+interface PlacesApiLocation {
+  latitude: number;
+  longitude: number;
+}
+
+interface PlaceResultNew {
+  id: string;
+  displayName?: PlacesApiText;
+  formattedAddress?: string;
+  location?: PlacesApiLocation;
+  types?: string[];
+  businessStatus?: string;
+  currentOpeningHours?: { openNow?: boolean };
+  rating?: number;
+  userRatingCount?: number;
+  websiteUri?: string;
+  nationalPhoneNumber?: string;
+  internationalPhoneNumber?: string;
+  googleMapsUri?: string;
+  editorialSummary?: PlacesApiText;
+}
+
+interface SearchTextRequest {
+  textQuery: string;
+  languageCode?: string;
+  regionCode?: string;
+  locationBias?: {
+    circle: {
+      center: { latitude: number; longitude: number };
+      radius: number;
+    };
+  };
+  includedType?: string;
+  pageSize?: number;
+  pageToken?: string;
+}
+
+interface SearchTextResponse {
+  places?: PlaceResultNew[];
+  nextPageToken?: string;
+}
+
+// Geocoding API 类型
+interface GeocodingResult {
   place_id: string;
-  name: string;
-  formatted_address?: string;
-  geometry?: {
+  formatted_address: string;
+  geometry: {
     location: { lat: number; lng: number };
   };
-  types?: string[];
-  business_status?: string;
-  opening_hours?: { open_now?: boolean };
-  rating?: number;
-  user_ratings_total?: number;
-  website?: string;
-  formatted_phone_number?: string;
-  international_phone_number?: string;
-  url?: string; // Google Maps URL
-  editorial_summary?: { overview: string };
+  address_components: Array<{
+    long_name: string;
+    short_name: string;
+    types: string[];
+  }>;
 }
 
-interface PlaceDetailsResult extends PlaceResult {
-  editorial_summary?: { overview: string };
-  reviews?: Array<{ text: string; rating: number }>;
-}
-
-interface TextSearchResponse {
-  results: PlaceResult[];
-  status: string;
-  next_page_token?: string;
-  error_message?: string;
-}
-
-interface PlaceDetailsResponse {
-  result: PlaceDetailsResult;
+interface GeocodingResponse {
+  results: GeocodingResult[];
   status: string;
   error_message?: string;
 }
 
-// ==================== Google Places 适配器 ====================
+export interface GeocodingResultParsed {
+  placeId: string;
+  formattedAddress: string;
+  lat: number;
+  lng: number;
+  country: string | null;
+  countryCode: string | null;
+  city: string | null;
+  region: string | null;
+}
+
+// ==================== Places API (New) 字段掩码 ====================
+
+const SEARCH_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.formattedAddress',
+  'places.location',
+  'places.types',
+  'places.businessStatus',
+  'places.rating',
+  'places.userRatingCount',
+  'places.websiteUri',
+  'places.nationalPhoneNumber',
+  'places.internationalPhoneNumber',
+  'places.googleMapsUri',
+  'places.editorialSummary',
+  'places.currentOpeningHours',
+].join(',');
+
+const DETAILS_FIELD_MASK = [
+  'id',
+  'displayName',
+  'formattedAddress',
+  'location',
+  'types',
+  'businessStatus',
+  'rating',
+  'userRatingCount',
+  'websiteUri',
+  'nationalPhoneNumber',
+  'internationalPhoneNumber',
+  'googleMapsUri',
+  'editorialSummary',
+  'currentOpeningHours',
+].join(',');
+
+// ==================== Google Places 适配器 (New API v1) ====================
 
 export class GooglePlacesAdapter implements RadarAdapter {
   readonly sourceCode = 'google_places';
@@ -64,7 +146,7 @@ export class GooglePlacesAdapter implements RadarAdapter {
     supportsRegionFilter: true,
     supportsPagination: true,
     supportsDetails: true,
-    maxResultsPerQuery: 60, // 3 pages * 20
+    maxResultsPerQuery: 60,
     rateLimit: { requests: 100, windowMs: 60000 },
   };
 
@@ -76,6 +158,8 @@ export class GooglePlacesAdapter implements RadarAdapter {
     this.timeout = config.timeout || 30000;
   }
 
+  // ==================== 主搜索接口 ====================
+
   async search(query: RadarSearchQuery): Promise<RadarSearchResult> {
     const startTime = Date.now();
     
@@ -86,12 +170,12 @@ export class GooglePlacesAdapter implements RadarAdapter {
     // 构建搜索查询
     const searchText = this.buildSearchText(query);
     
-    // 执行 Text Search
-    const results = await this.textSearch(searchText, query);
-    const hydratedResults = await this.hydrateResultsWithDetails(results);
+    // 执行 Text Search (New API v1)
+    const results = await this.textSearchNew(searchText, query);
     
+    // 结果已包含详细信息，无需额外 hydrate
     // 标准化结果
-    const items = hydratedResults.map(r => this.normalize(r));
+    const items = results.map(r => this.normalizeNew(r));
     
     const duration = Date.now() - startTime;
     
@@ -105,41 +189,11 @@ export class GooglePlacesAdapter implements RadarAdapter {
         fetchedAt: new Date(),
         duration,
       },
-      // Google Places: 无分页 token 时视为 exhausted
       isExhausted: true,
     };
   }
 
-  private async hydrateResultsWithDetails(results: PlaceResult[]): Promise<PlaceResult[]> {
-    const hydrated = await Promise.allSettled(
-      results.map(async (result) => {
-        const details = await this.getDetails(result.place_id);
-        if (!details) {
-          return result;
-        }
-
-        return {
-          ...result,
-          formatted_address: result.formatted_address || details.address,
-          international_phone_number:
-            result.international_phone_number || result.formatted_phone_number || details.phone,
-          formatted_phone_number: result.formatted_phone_number || details.phone,
-          website: result.website || details.website,
-          url:
-            result.url ||
-            (typeof details.additionalInfo?.googleMapsUrl === 'string'
-              ? details.additionalInfo.googleMapsUrl
-              : undefined),
-          editorial_summary:
-            typeof details.description === 'string'
-              ? { overview: details.description }
-              : result.editorial_summary,
-        } satisfies PlaceResult;
-      })
-    );
-
-    return hydrated.map((item, index) => (item.status === 'fulfilled' ? item.value : results[index]));
-  }
+  // ==================== 搜索文本构建 ====================
 
   /**
    * 构建搜索文本
@@ -178,53 +232,165 @@ export class GooglePlacesAdapter implements RadarAdapter {
     return parts.join(' ') || 'industrial company';
   }
 
+  // ==================== Places API (New) v1 - SearchText ====================
+
   /**
-   * Text Search API
+   * Places API (New) - Text Search
+   * POST https://places.googleapis.com/v1/places:searchText
    */
-  private async textSearch(
+  private async textSearchNew(
     searchText: string, 
     query: RadarSearchQuery
-  ): Promise<PlaceResult[]> {
-    const params = new URLSearchParams({
-      query: searchText,
-      key: this.apiKey,
-    });
+  ): Promise<PlaceResultNew[]> {
+    const body: SearchTextRequest = {
+      textQuery: searchText,
+      languageCode: 'en',
+      pageSize: 20,
+    };
     
-    // 添加位置偏好
+    // 地区偏置
     if (query.locationBias) {
-      params.set('location', `${query.locationBias.lat},${query.locationBias.lng}`);
-      params.set('radius', String(query.locationBias.radius * 1000)); // km to m
+      body.locationBias = {
+        circle: {
+          center: {
+            latitude: query.locationBias.lat,
+            longitude: query.locationBias.lng,
+          },
+          radius: query.locationBias.radius * 1000, // km to m
+        },
+      };
     }
     
-    // 添加国家/地区
+    // 国家/地区限定
     if (query.countries?.length === 1) {
-      const regionCode = query.countries[0].toLowerCase() === 'gb' ? 'uk' : query.countries[0].toLowerCase();
-      params.set('region', regionCode);
+      body.regionCode = query.countries[0].toUpperCase();
     }
-    
-    // 只搜索商业场所
-    params.set('type', 'establishment');
     
     const response = await fetch(
-      `https://maps.googleapis.com/maps/api/place/textsearch/json?${params}`,
-      { signal: AbortSignal.timeout(this.timeout) }
+      'https://places.googleapis.com/v1/places:searchText',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': this.apiKey,
+          'X-Goog-FieldMask': SEARCH_FIELD_MASK,
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeout),
+      }
     );
     
     if (!response.ok) {
-      throw new Error(`Google Places API error: ${response.status}`);
+      const errText = await response.text().catch(() => '');
+      throw new Error(`Google Places API (New) error: ${response.status} - ${errText}`);
     }
     
-    const data: TextSearchResponse = await response.json();
+    const data: SearchTextResponse = await response.json();
     
-    if (data.status !== 'OK' && data.status !== 'ZERO_RESULTS') {
-      throw new Error(`Google Places API error: ${data.status} - ${data.error_message || ''}`);
+    return data.places || [];
+  }
+
+  // ==================== Geocoding API ====================
+
+  /**
+   * 正向地理编码：地址 → 坐标
+   */
+  async geocode(address: string): Promise<GeocodingResultParsed | null> {
+    if (!this.apiKey) return null;
+    
+    const params = new URLSearchParams({
+      address,
+      key: this.apiKey,
+    });
+    
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?${params}`,
+        { signal: AbortSignal.timeout(this.timeout) }
+      );
+      
+      if (!response.ok) return null;
+      
+      const data: GeocodingResponse = await response.json();
+      
+      if (data.status !== 'OK' || !data.results.length) return null;
+      
+      return this.parseGeocodingResult(data.results[0]);
+    } catch (error) {
+      console.error('Geocoding failed:', error);
+      return null;
     }
-    
-    return data.results || [];
   }
 
   /**
-   * 获取详细信息
+   * 反向地理编码：坐标 → 地址
+   */
+  async reverseGeocode(lat: number, lng: number): Promise<GeocodingResultParsed | null> {
+    if (!this.apiKey) return null;
+    
+    const params = new URLSearchParams({
+      latlng: `${lat},${lng}`,
+      key: this.apiKey,
+    });
+    
+    try {
+      const response = await fetch(
+        `https://maps.googleapis.com/maps/api/geocode/json?${params}`,
+        { signal: AbortSignal.timeout(this.timeout) }
+      );
+      
+      if (!response.ok) return null;
+      
+      const data: GeocodingResponse = await response.json();
+      
+      if (data.status !== 'OK' || !data.results.length) return null;
+      
+      return this.parseGeocodingResult(data.results[0]);
+    } catch (error) {
+      console.error('Reverse geocoding failed:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 解析 Geocoding 结果为结构化数据
+   */
+  private parseGeocodingResult(result: GeocodingResult): GeocodingResultParsed {
+    let country: string | null = null;
+    let countryCode: string | null = null;
+    let city: string | null = null;
+    let region: string | null = null;
+
+    for (const comp of result.address_components) {
+      if (comp.types.includes('country')) {
+        country = comp.long_name;
+        countryCode = comp.short_name;
+      }
+      if (comp.types.includes('locality') || comp.types.includes('postal_town')) {
+        city = comp.long_name;
+      }
+      if (comp.types.includes('administrative_area_level_1')) {
+        region = comp.long_name;
+      }
+    }
+
+    return {
+      placeId: result.place_id,
+      formattedAddress: result.formatted_address,
+      lat: result.geometry.location.lat,
+      lng: result.geometry.location.lng,
+      country,
+      countryCode,
+      city,
+      region,
+    };
+  }
+
+  // ==================== Places 详情 ====================
+
+  /**
+   * Places API (New) v1 - Place Details
+   * GET https://places.googleapis.com/v1/places/{place_id}
    */
   async getDetails(externalId: string): Promise<{
     externalId: string;
@@ -238,39 +404,37 @@ export class GooglePlacesAdapter implements RadarAdapter {
   } | null> {
     if (!this.apiKey) return null;
     
-    const params = new URLSearchParams({
-      place_id: externalId,
-      key: this.apiKey,
-      fields: 'name,formatted_address,formatted_phone_number,international_phone_number,website,url,editorial_summary,rating,user_ratings_total,types,business_status,opening_hours',
-    });
-    
     try {
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/details/json?${params}`,
-        { signal: AbortSignal.timeout(this.timeout) }
+        `https://places.googleapis.com/v1/places/${externalId}`,
+        {
+          headers: {
+            'X-Goog-Api-Key': this.apiKey,
+            'X-Goog-FieldMask': DETAILS_FIELD_MASK,
+          },
+          signal: AbortSignal.timeout(this.timeout),
+        }
       );
       
       if (!response.ok) return null;
       
-      const data: PlaceDetailsResponse = await response.json();
-      
-      if (data.status !== 'OK') return null;
-      
-      const place = data.result;
+      const place: PlaceResultNew = await response.json();
       
       return {
         externalId,
-        name: place.name,
-        phone: place.international_phone_number || place.formatted_phone_number,
-        website: place.website,
-        address: place.formatted_address,
-        description: place.editorial_summary?.overview,
+        name: place.displayName?.text,
+        phone: place.internationalPhoneNumber || place.nationalPhoneNumber,
+        website: place.websiteUri,
+        address: place.formattedAddress,
+        description: place.editorialSummary?.text,
         additionalInfo: {
           rating: place.rating,
-          reviewCount: place.user_ratings_total,
+          reviewCount: place.userRatingCount,
           types: place.types,
-          businessStatus: place.business_status,
-          googleMapsUrl: place.url,
+          businessStatus: place.businessStatus,
+          googleMapsUrl: place.googleMapsUri,
+          lat: place.location?.latitude,
+          lng: place.location?.longitude,
         },
       };
     } catch (error) {
@@ -279,11 +443,14 @@ export class GooglePlacesAdapter implements RadarAdapter {
     }
   }
 
-  normalize(raw: unknown): NormalizedCandidate {
-    const place = raw as PlaceResult;
-    
+  // ==================== 标准化 ====================
+
+  /**
+   * 标准化新版 API 返回结果
+   */
+  private normalizeNew(place: PlaceResultNew): NormalizedCandidate {
     // 从地址提取国家/城市
-    const addressParts = place.formatted_address?.split(', ') || [];
+    const addressParts = place.formattedAddress?.split(', ') || [];
     const countryPart = addressParts.length > 0 ? addressParts[addressParts.length - 1] : undefined;
     const country = getCountryDisplayName(countryPart) || countryPart;
     const city = addressParts.length > 1 ? addressParts[addressParts.length - 2] : undefined;
@@ -292,15 +459,15 @@ export class GooglePlacesAdapter implements RadarAdapter {
     const industry = this.inferIndustry(place.types || []);
     
     return {
-      externalId: place.place_id,
-      sourceUrl: place.url || `https://www.google.com/maps/place/?q=place_id:${place.place_id}`,
-      displayName: place.name,
+      externalId: place.id,
+      sourceUrl: place.googleMapsUri || `https://www.google.com/maps/place/?q=place_id:${place.id}`,
+      displayName: place.displayName?.text || '未知企业',
       candidateType: 'COMPANY',
-      description: place.editorial_summary?.overview,
+      description: place.editorialSummary?.text,
       
-      website: place.website,
-      phone: place.international_phone_number || place.formatted_phone_number,
-      address: place.formatted_address,
+      website: place.websiteUri,
+      phone: place.internationalPhoneNumber || place.nationalPhoneNumber,
+      address: place.formattedAddress,
       country,
       city,
       industry,
@@ -309,21 +476,30 @@ export class GooglePlacesAdapter implements RadarAdapter {
         channel: 'google_places',
         reasons: [
           `Google Maps POI`,
-          place.rating ? `评分 ${place.rating}⭐ (${place.user_ratings_total} 评)` : undefined,
-          place.business_status === 'OPERATIONAL' ? '营业中' : undefined,
+          place.rating ? `评分 ${place.rating}⭐ (${place.userRatingCount || 0} 评)` : undefined,
+          place.businessStatus === 'OPERATIONAL' ? '营业中' : undefined,
         ].filter(Boolean) as string[],
       },
       
       rawData: {
-        source: 'google_places',
-        place_id: place.place_id,
+        source: 'google_places_new',
+        place_id: place.id,
         types: place.types,
         rating: place.rating,
-        user_ratings_total: place.user_ratings_total,
-        business_status: place.business_status,
-        geometry: place.geometry,
+        user_ratings_total: place.userRatingCount,
+        business_status: place.businessStatus,
+        lat: place.location?.latitude,
+        lng: place.location?.longitude,
       },
     };
+  }
+
+  /**
+   * 兼容旧版 normalize 接口
+   */
+  normalize(raw: unknown): NormalizedCandidate {
+    const place = raw as PlaceResultNew;
+    return this.normalizeNew(place);
   }
 
   /**
@@ -359,6 +535,8 @@ export class GooglePlacesAdapter implements RadarAdapter {
     return undefined;
   }
 
+  // ==================== 健康检查 ====================
+
   async healthCheck(): Promise<HealthStatus> {
     if (!this.apiKey) {
       return {
@@ -371,28 +549,43 @@ export class GooglePlacesAdapter implements RadarAdapter {
     const startTime = Date.now();
     
     try {
-      // 执行一个简单查询测试 API
-      const params = new URLSearchParams({
-        query: 'test company',
-        key: this.apiKey,
-      });
+      // 使用新版 Places API 做一个简单搜索测试
+      const body: SearchTextRequest = {
+        textQuery: 'test company',
+        pageSize: 1,
+      };
       
       const response = await fetch(
-        `https://maps.googleapis.com/maps/api/place/textsearch/json?${params}`,
-        { signal: AbortSignal.timeout(5000) }
+        'https://places.googleapis.com/v1/places:searchText',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Goog-Api-Key': this.apiKey,
+            'X-Goog-FieldMask': 'places.id,places.displayName',
+          },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(5000),
+        }
       );
       
-      const data: TextSearchResponse = await response.json();
       const latency = Date.now() - startTime;
       
-      if (data.status === 'OK' || data.status === 'ZERO_RESULTS') {
-        return { healthy: true, latency };
+      if (response.ok) {
+        const data = await response.json() as SearchTextResponse;
+        const count = data.places?.length || 0;
+        return { 
+          healthy: true, 
+          latency,
+          message: `Places API (New) OK — returned ${count} results`,
+        };
       }
       
+      const errText = await response.text().catch(() => 'Unknown error');
       return {
         healthy: false,
         latency,
-        error: `API error: ${data.status} - ${data.error_message || ''}`,
+        error: `API error ${response.status}: ${errText}`,
       };
     } catch (error) {
       return {
