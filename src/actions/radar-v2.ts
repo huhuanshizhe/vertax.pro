@@ -270,7 +270,7 @@ export async function initializeSystemSourcesV2() {
   return created;
 }
 
-const AUTO_DISCOVERY_SOURCE_CODES = ['batch_discovery', 'multi_search'] as const;
+const AUTO_DISCOVERY_SOURCE_CODES = ['google_places', 'ai_search', 'batch_discovery', 'multi_search'] as const;
 
 async function getOrCreateAutoDiscoverySource(): Promise<RadarSource> {
   ensureAdaptersInitialized();
