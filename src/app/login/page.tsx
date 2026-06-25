@@ -10,6 +10,7 @@ import { isPlatformAdminRoleName } from "@/lib/permissions";
 import {
   isLocalDevelopmentHostname,
   normalizeHostname,
+  getTenantCanonicalRedirectUrl,
 } from "@/lib/tenant-resolver";
 
 const BASE_DOMAIN = process.env.NEXT_PUBLIC_BASE_DOMAIN || "vertax.top";
@@ -121,6 +122,18 @@ export default function LoginPage() {
   useEffect(() => {
     if (status !== "authenticated" || !session?.user) {
       return;
+    }
+
+    // 域名-租户绑定检查：防止从错误子域名登录
+    if (typeof window !== "undefined" && session.user.tenantSlug) {
+      const canonical = getTenantCanonicalRedirectUrl({
+        currentUrl: window.location.href,
+        sessionTenantSlug: session.user.tenantSlug,
+      });
+      if (canonical) {
+        window.location.href = canonical;
+        return;
+      }
     }
 
     void navigateAfterLogin();
