@@ -167,36 +167,10 @@ export class GooglePlacesAdapter implements RadarAdapter {
       throw new Error('Google Maps API key not configured');
     }
     
-    // 将关键词拆成多轮，每轮最多 3 个关键词
-    const keywordBatches = this.buildKeywordBatches(query);
-    const seenIds = new Set<string>();
-    const allResults: PlaceResultNew[] = [];
-    
-    for (const batchKeywords of keywordBatches) {
-      // 超时保护：每轮搜索也受全局时间预算约束
-      if (Date.now() - startTime > 25000) {
-        console.warn(`[GooglePlaces] Time budget exhausted after ${allResults.length} results from ${allResults.length > 0 ? keywordBatches.indexOf(batchKeywords) : 0}/${keywordBatches.length} batches`);
-        break;
-      }
-
-      const searchText = this.buildSearchTextForKeywords(batchKeywords, query);
-      const batchResults = await this.textSearchNew(searchText, query);
-      
-      // 跨轮去重（以 place id 为 key）
-      for (const r of batchResults) {
-        if (!seenIds.has(r.id)) {
-          seenIds.add(r.id);
-          allResults.push(r);
-        }
-      }
-      
-      // 批间速率限制
-      if (keywordBatches.length > 1) {
-        await new Promise(r => setTimeout(r, 500));
-      }
-    }
-    
-    const items = allResults.map(r => this.normalizeNew(r));
+    // 单关键词直搜：一次搜索穷尽该词的所有结果（翻页到 Google 无更多数据）
+    const searchText = this.buildSearchTextForKeywords(query.keywords || [], query);
+    const results = await this.textSearchNew(searchText, query);
+    const items = results.map(r => this.normalizeNew(r));
     const duration = Date.now() - startTime;
     
     return {
@@ -211,22 +185,6 @@ export class GooglePlacesAdapter implements RadarAdapter {
       },
       isExhausted: true,
     };
-  }
-
-  // ==================== 关键词分批 ====================
-
-  /**
-   * 将关键词列表拆成多个批次（每批最多 3 个）
-   */
-  private buildKeywordBatches(query: RadarSearchQuery): string[][] {
-    const keywords = query.keywords || [];
-    if (keywords.length === 0) return [[]]; // 无关键词时仍然搜索一次
-    
-    const batches: string[][] = [];
-    for (let i = 0; i < keywords.length; i += 3) {
-      batches.push(keywords.slice(i, i + 3));
-    }
-    return batches;
   }
 
   // ==================== 搜索文本构建 ====================

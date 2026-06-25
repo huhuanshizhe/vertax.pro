@@ -219,18 +219,35 @@ export default function RadarSearchPage() {
       return;
     }
 
-    // "start" 模式：跳过已完成的国家；"restart" 模式：全部重新搜索
-    const pendingCountries = mode === "restart"
-      ? countries
-      : comboMatrix
-        ? countries.filter(c => {
-            const countryCells = comboMatrix.cells.filter(cell => cell.country === c);
-            return countryCells.some(cell => cell.status === 'pending');
-          })
-        : countries;
+    const allKeywords = segmentation?.technographic?.keywords || [];
+    if (allKeywords.length === 0) {
+      setError("当前画像没有关键词。");
+      return;
+    }
 
-    if (mode !== "restart" && pendingCountries.length === 0) {
-      toast.info("所有国家与关键词组合均已完成搜索 ✅ 可使用「按最新画像重新搜索」强制重搜");
+    // 构建所有 (keyword × country) 组合
+    type Combo = { keyword: string; country: string };
+    const allCombos: Combo[] = [];
+    for (const kw of allKeywords) {
+      for (const c of countries) {
+        allCombos.push({ keyword: kw, country: c });
+      }
+    }
+
+    // "start" 模式：只搜未完成的组合；"restart" 模式：全部重搜
+    const pendingCombos = mode === "restart"
+      ? allCombos
+      : comboMatrix
+        ? allCombos.filter(combo => {
+            const cell = comboMatrix.cells.find(
+              c => c.keyword === combo.keyword && c.country === combo.country
+            );
+            return !cell || cell.status === 'pending';
+          })
+        : allCombos;
+
+    if (mode !== "restart" && pendingCombos.length === 0) {
+      toast.info("所有关键词×国家组合均已完成搜索 ✅");
       return;
     }
 
@@ -240,32 +257,31 @@ export default function RadarSearchPage() {
     let totalDuplicates = 0;
     const errors: string[] = [];
 
-    // 客户端逐国调用，每个国家独立超时
-    for (let i = 0; i < pendingCountries.length; i++) {
-      const country = pendingCountries[i];
-      setSearchProgress({ current: i, total: pendingCountries.length, currentCountry: country });
+    // 逐组合调用，每个独立超时
+    for (let i = 0; i < pendingCombos.length; i++) {
+      const combo = pendingCombos[i];
+      setSearchProgress({ current: i, total: pendingCombos.length, currentCountry: combo.country });
 
       try {
         const result = await runSingleCountrySearch({
-          name: mode === "restart" ? "按最新画像重新搜索" : "按当前画像搜索",
+          name: mode === "restart" ? "重新搜索" : "自动搜索",
           queryConfig: effectiveQuery,
-          country,
+          keyword: combo.keyword,
+          country: combo.country,
           targetingRef: { specVersionId: targetingVersion.id },
         });
 
         totalCreated += result.created;
         totalDuplicates += result.duplicates;
         if (result.error) {
-          errors.push(`${country}: ${result.error}`);
+          errors.push(`${combo.keyword}×${combo.country}: ${result.error}`);
         }
 
-        // 每完成一个国家，刷新矩阵
-        const specKeywords = segmentation?.technographic?.keywords || [];
-        if (specKeywords.length > 0) {
-          getSearchComboMatrix(specKeywords, countries.map((c: string) => c as string)).then(setComboMatrix).catch(() => null);
-        }
+        // 每完成一个组合，刷新矩阵
+        getSearchComboMatrix(allKeywords, countries.map((c: string) => c as string))
+          .then(setComboMatrix).catch(() => null);
       } catch (err) {
-        errors.push(`${country}: ${err instanceof Error ? err.message : 'Unknown error'}`);
+        errors.push(`${combo.keyword}×${combo.country}: ${err instanceof Error ? err.message : 'Unknown'}`);
       }
     }
 
@@ -273,12 +289,12 @@ export default function RadarSearchPage() {
     setActionState(null);
 
     if (errors.length === 0) {
-      toast.success("全部国家搜索完成", {
-        description: `共搜索 ${pendingCountries.length} 个国家，新增 ${totalCreated} 家公司，去重 ${totalDuplicates} 家。`,
+      toast.success(`全部组合搜索完成`, {
+        description: `共 ${pendingCombos.length} 个组合，新增 ${totalCreated} 家，去重 ${totalDuplicates} 家。`,
       });
-    } else if (errors.length < pendingCountries.length) {
-      toast.warning("部分国家搜索完成", {
-        description: `${pendingCountries.length - errors.length}/${pendingCountries.length} 成功。新增 ${totalCreated} 家。`,
+    } else if (errors.length < pendingCombos.length) {
+      toast.warning(`${pendingCombos.length - errors.length}/${pendingCombos.length} 组合成功`, {
+        description: `新增 ${totalCreated} 家。`,
       });
     } else {
       toast.error("搜索失败", { description: errors.join("; ") });
@@ -324,7 +340,7 @@ export default function RadarSearchPage() {
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <ActionCard label={comboMatrix && comboMatrix.summary.pending === 0 ? "所有组合已完成 ✅" : "搜索未完成的国家"} hint={comboMatrix && comboMatrix.summary.pending === 0 ? "所有关键词×国家组合均已搜索" : `逐国搜索 (${Array.from(selectedCountries).length} 国, ${comboMatrix?.summary.pending || "?"} 组合待搜)`} icon={Play} active={actionState === "start"} disabled={!canStartSearch || (comboMatrix?.summary?.pending === 0)} onClick={() => runSearch("start")} primary />
+            <ActionCard label={comboMatrix && comboMatrix.summary.pending === 0 ? "所有组合已完成 ✅" : "搜索未完成的组合"} hint={comboMatrix && comboMatrix.summary.pending === 0 ? `共 ${comboMatrix.summary.total} 个组合均已搜索` : `逐组合搜索 (${comboMatrix?.summary.pending || "?"} 个待搜)`} icon={Play} active={actionState === "start"} disabled={!canStartSearch || (comboMatrix?.summary?.pending === 0)} onClick={() => runSearch("start")} primary />
             <ActionCard label="按最新画像重新搜索" hint="强制重新搜索所有已选国家（忽略矩阵状态）" icon={RefreshCw} active={actionState === "restart"} disabled={!canStartSearch} onClick={() => runSearch("restart")} />
             <ActionCard label={activeProfiles.length ? "暂停自动搜索" : "恢复自动搜索"} hint={activeProfiles.length ? "暂停当前搜索计划" : "恢复已有搜索计划"} icon={activeProfiles.length ? Pause : Play} active={actionState === "pause" || actionState === "resume"} disabled={!activeProfiles.length && !pausedProfiles.length} onClick={() => toggleAutomation(activeProfiles.length ? "pause" : "resume")} />
             <Link href="/customer/radar/candidates" className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] px-4 py-4 transition-colors hover:border-[var(--ci-accent)]/35 hover:bg-[var(--ci-surface-muted)]"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-semibold text-[#0B1B2B]">查看 AI 推荐</div><div className="mt-1 text-xs text-slate-500">查看 AI 为您筛选的潜在客户</div></div><ChevronRight size={18} className="text-[var(--ci-accent)]" /></div></Link>
@@ -488,14 +504,12 @@ export default function RadarSearchPage() {
                     {comboMatrix.countries.map(c => {
                       const cell = comboMatrix.cells.find(x => x.keyword === kw && x.country === c.code);
                       const isDone = cell?.status === 'completed';
-                      const round = cell?.searchCount || 0;
-                      const roundLabels = ['','①','②','③','④','⑤'];
                       return (
                         <td key={`${kw}-${c.code}`} className="px-3 py-2.5 text-center">
                           {isDone ? (
-                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 text-xs" title={`搜索 ${round} 轮，${cell!.resultCount} 条结果，${cell!.newCount} 条新增`}>
-                              {round > 1 ? roundLabels[Math.min(round, 5)] : <CheckCircle2 size={12} />}
-                              {cell!.newCount || ''}
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700 text-xs" title={`${cell!.resultCount} 条结果，${cell!.newCount} 条新增`}>
+                              <CheckCircle2 size={12} />
+                              {cell!.newCount || '✓'}
                             </span>
                           ) : (
                             <span className="inline-flex items-center gap-1 text-slate-300"><Circle size={12} /></span>

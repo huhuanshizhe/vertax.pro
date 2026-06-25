@@ -2107,14 +2107,16 @@ export async function enrichProspectCompaniesBatchAction(
 // ==================== 单国搜索 ====================
 
 /**
- * 单国搜索：创建一个任务并立即执行（用于客户端逐国调用，每个国家独立超时）
+ * 单组合搜索：一个关键词 × 一个国家，穷尽式翻页
  */
 export async function runSingleCountrySearch(input: {
   name: string;
   queryConfig: RadarSearchQuery;
+  keyword: string;
   country: string;
   targetingRef?: { specVersionId?: string };
 }): Promise<{
+  keyword: string;
   country: string;
   fetched: number;
   created: number;
@@ -2125,20 +2127,22 @@ export async function runSingleCountrySearch(input: {
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
 
   try {
-    const singleCountryQuery: RadarSearchQuery = {
+    const singleComboQuery: RadarSearchQuery = {
       ...input.queryConfig,
+      keywords: [input.keyword],
       countries: [input.country],
     };
 
     const task = await createDiscoveryTaskV2({
-      name: `${input.name} - ${input.country}`,
-      queryConfig: singleCountryQuery,
+      name: `${input.name}: ${input.keyword} × ${input.country}`,
+      queryConfig: singleComboQuery,
       targetingRef: input.targetingRef,
     });
 
     const result = await runRadarTask(task.id);
 
     return {
+      keyword: input.keyword,
       country: input.country,
       fetched: result.stats.fetched,
       created: result.stats.created,
@@ -2147,6 +2151,7 @@ export async function runSingleCountrySearch(input: {
     };
   } catch (err) {
     return {
+      keyword: input.keyword,
       country: input.country,
       fetched: 0,
       created: 0,
