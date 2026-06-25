@@ -264,6 +264,8 @@ export class GooglePlacesAdapter implements RadarAdapter {
       if (pageToken) {
         body.pageToken = pageToken;
       }
+
+      console.log(`[GooglePlaces] Page ${page + 1}: hasToken=${!!pageToken}, searchText="${searchText.slice(0, 60)}..."`);
     
       const response = await fetch(
         'https://places.googleapis.com/v1/places:searchText',
@@ -289,6 +291,7 @@ export class GooglePlacesAdapter implements RadarAdapter {
       
       // 检查是否有下一页
       pageToken = data.nextPageToken;
+      console.log(`[GooglePlaces] Page ${page + 1}: got ${data.places?.length || 0} places, nextPageToken=${pageToken ? pageToken.slice(0, 20) + '...' : 'null'}`);
       if (!pageToken) break;
       
       if (pageToken) await new Promise(r => setTimeout(r, 300));
