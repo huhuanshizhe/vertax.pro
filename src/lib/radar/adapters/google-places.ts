@@ -236,11 +236,12 @@ export class GooglePlacesAdapter implements RadarAdapter {
     query: RadarSearchQuery
   ): Promise<PlaceResultNew[]> {
     const perPage = 20;
+    const maxPages = 4;  // 安全阀：最多 80 条，防止大国搜索超时
     const allResults: PlaceResultNew[] = [];
     let pageToken: string | undefined;
     
-    // 一直翻页直到 Google 没有更多数据，不设人工上限
-    do {
+    // 一直翻页直到 Google 没有更多数据或达到安全上限
+    for (let page = 0; page < maxPages; page++) {
       const body: SearchTextRequest = {
         textQuery: searchText,
         languageCode: 'en',
@@ -288,10 +289,10 @@ export class GooglePlacesAdapter implements RadarAdapter {
       
       // 检查是否有下一页
       pageToken = data.nextPageToken;
+      if (!pageToken) break;
       
-      // Google 要求翻页之间短暂等待
       if (pageToken) await new Promise(r => setTimeout(r, 300));
-    } while (pageToken);
+    }
     
     return allResults;
   }

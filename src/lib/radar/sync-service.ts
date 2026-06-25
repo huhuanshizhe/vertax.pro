@@ -158,8 +158,8 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
         break;
       }
 
-      // 并行处理候选（并发数5，避免数据库连接耗尽）
-      const CONCURRENCY = 5;
+      // 并行处理候选（并发数10）
+      const CONCURRENCY = 10;
       for (let i = 0; i < result.items.length; i += CONCURRENCY) {
         const batch = result.items.slice(i, i + CONCURRENCY);
         const batchResults = await Promise.allSettled(
