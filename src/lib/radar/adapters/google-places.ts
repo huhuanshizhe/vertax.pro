@@ -167,16 +167,36 @@ export class GooglePlacesAdapter implements RadarAdapter {
       throw new Error('Google Maps API key not configured');
     }
     
-    // 构建搜索查询
-    const searchText = this.buildSearchText(query);
+    // 将关键词拆成多轮，每轮最多 3 个关键词
+    const keywordBatches = this.buildKeywordBatches(query);
+    const seenIds = new Set<string>();
+    const allResults: PlaceResultNew[] = [];
     
-    // 执行 Text Search (New API v1)
-    const results = await this.textSearchNew(searchText, query);
+    for (const batchKeywords of keywordBatches) {
+      // 超时保护：每轮搜索也受全局时间预算约束
+      if (Date.now() - startTime > 25000) {
+        console.warn(`[GooglePlaces] Time budget exhausted after ${allResults.length} results from ${allResults.length > 0 ? keywordBatches.indexOf(batchKeywords) : 0}/${keywordBatches.length} batches`);
+        break;
+      }
+
+      const searchText = this.buildSearchTextForKeywords(batchKeywords, query);
+      const batchResults = await this.textSearchNew(searchText, query);
+      
+      // 跨轮去重（以 place id 为 key）
+      for (const r of batchResults) {
+        if (!seenIds.has(r.id)) {
+          seenIds.add(r.id);
+          allResults.push(r);
+        }
+      }
+      
+      // 批间速率限制
+      if (keywordBatches.length > 1) {
+        await new Promise(r => setTimeout(r, 500));
+      }
+    }
     
-    // 结果已包含详细信息，无需额外 hydrate
-    // 标准化结果
-    const items = results.map(r => this.normalizeNew(r));
-    
+    const items = allResults.map(r => this.normalizeNew(r));
     const duration = Date.now() - startTime;
     
     return {
@@ -193,18 +213,33 @@ export class GooglePlacesAdapter implements RadarAdapter {
     };
   }
 
+  // ==================== 关键词分批 ====================
+
+  /**
+   * 将关键词列表拆成多个批次（每批最多 3 个）
+   */
+  private buildKeywordBatches(query: RadarSearchQuery): string[][] {
+    const keywords = query.keywords || [];
+    if (keywords.length === 0) return [[]]; // 无关键词时仍然搜索一次
+    
+    const batches: string[][] = [];
+    for (let i = 0; i < keywords.length; i += 3) {
+      batches.push(keywords.slice(i, i + 3));
+    }
+    return batches;
+  }
+
   // ==================== 搜索文本构建 ====================
 
   /**
-   * 构建搜索文本
+   * 为指定关键词批次构建搜索文本
    */
-  private buildSearchText(query: RadarSearchQuery): string {
+  private buildSearchTextForKeywords(keywords: string[], query: RadarSearchQuery): string {
     const parts: string[] = [];
     
-    // 关键词 - 只取前3个，避免查询过长
-    if (query.keywords?.length) {
-      const topKeywords = query.keywords.slice(0, 3);
-      parts.push(topKeywords.join(' '));
+    // 使用传入的关键词批次
+    if (keywords.length) {
+      parts.push(keywords.join(' '));
     }
     
     // 行业/类型
@@ -242,10 +277,11 @@ export class GooglePlacesAdapter implements RadarAdapter {
     searchText: string, 
     query: RadarSearchQuery
   ): Promise<PlaceResultNew[]> {
+    const pageSize = Math.min(query.maxResults || 20, 20); // Google max 20 per page
     const body: SearchTextRequest = {
       textQuery: searchText,
       languageCode: 'en',
-      pageSize: 20,
+      pageSize,
     };
     
     // 地区偏置
