@@ -144,29 +144,36 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
       const result = await adapter.search({ ...query, page });
       stats.fetched += result.items.length;
 
-      // 处理每个候选
-      for (const item of result.items) {
-        try {
-          // excludeKeywords 过滤：排除含有指定词的结果
-          if (query.excludeKeywords?.length) {
-            const textToCheck = [item.displayName, item.description, item.industry]
-              .filter(Boolean)
-              .join(' ')
-              .toLowerCase();
-            const excluded = query.excludeKeywords.some(kw => textToCheck.includes(kw.toLowerCase()));
-            if (excluded) {
-              stats.duplicates++; // 计入 duplicates（被过滤）
-              continue;
+      // 并行处理候选（并发数5，避免数据库连接耗尽）
+      const CONCURRENCY = 5;
+      for (let i = 0; i < result.items.length; i += CONCURRENCY) {
+        const batch = result.items.slice(i, i + CONCURRENCY);
+        const batchResults = await Promise.allSettled(
+          batch.map(async (item) => {
+            // excludeKeywords 过滤
+            if (query.excludeKeywords?.length) {
+              const textToCheck = [item.displayName, item.description, item.industry]
+                .filter(Boolean)
+                .join(' ')
+                .toLowerCase();
+              if (query.excludeKeywords.some(kw => textToCheck.includes(kw.toLowerCase()))) {
+                stats.duplicates++;
+                return null;
+              }
             }
+            const processed = await processCandidate(task, item, stats);
+            if (processed.autoEnrich && processed.createdCandidateId) {
+              return processed.createdCandidateId;
+            }
+            return null;
+          })
+        );
+        for (const r of batchResults) {
+          if (r.status === 'fulfilled' && r.value) {
+            autoEnrichQueue.push(r.value);
+          } else if (r.status === 'rejected') {
+            stats.errors.push(`Failed to process candidate: ${r.reason instanceof Error ? r.reason.message : 'Unknown'}`);
           }
-
-          const processed = await processCandidate(task, item, stats);
-          if (processed.autoEnrich && processed.createdCandidateId) {
-            autoEnrichQueue.push(processed.createdCandidateId);
-          }
-        } catch (error) {
-          const errMsg = error instanceof Error ? error.message : 'Unknown error';
-          stats.errors.push(`Failed to process candidate: ${errMsg}`);
         }
       }
 

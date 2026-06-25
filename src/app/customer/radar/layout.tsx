@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { RadarSecondaryNav } from "@/components/radar/radar-secondary-nav";
 
+export const maxDuration = 60; // Vercel Hobby max - applies to all server actions in this segment
+
 export default function RadarLayout({
   children,
 }: {

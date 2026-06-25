@@ -155,7 +155,7 @@ export class GooglePlacesAdapter implements RadarAdapter {
 
   constructor(config: AdapterConfig) {
     this.apiKey = config.apiKey || process.env.GOOGLE_MAPS_API_KEY || '';
-    this.timeout = config.timeout || 30000;
+    this.timeout = config.timeout || 15000;
   }
 
   // ==================== 主搜索接口 ====================
