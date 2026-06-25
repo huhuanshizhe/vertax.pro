@@ -654,7 +654,6 @@ function buildQuery(targetingSpec: TargetingSpecContent["targetingSpec"], prefer
     countries: isoCountries?.length ? isoCountries : undefined,
     targetIndustries: mergeLists(targetingSpec?.segmentation?.firmographic?.industries, splitText(preferences.priorityIndustries)) || undefined,
     keywords: mergeLists(targetingSpec?.segmentation?.technographic?.keywords, splitText(preferences.extraKeywords)) || undefined,
-    maxResults: 40,
   };
 }
 
