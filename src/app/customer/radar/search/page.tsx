@@ -219,16 +219,18 @@ export default function RadarSearchPage() {
       return;
     }
 
-    // 过滤掉所有组合都已完成的国家
-    const pendingCountries = comboMatrix
-      ? countries.filter(c => {
-          const countryCells = comboMatrix.cells.filter(cell => cell.country === c);
-          return countryCells.some(cell => cell.status === 'pending');
-        })
-      : countries;
+    // "start" 模式：跳过已完成的国家；"restart" 模式：全部重新搜索
+    const pendingCountries = mode === "restart"
+      ? countries
+      : comboMatrix
+        ? countries.filter(c => {
+            const countryCells = comboMatrix.cells.filter(cell => cell.country === c);
+            return countryCells.some(cell => cell.status === 'pending');
+          })
+        : countries;
 
-    if (pendingCountries.length === 0) {
-      toast.info("所有国家与关键词组合均已完成搜索 ✅");
+    if (mode !== "restart" && pendingCountries.length === 0) {
+      toast.info("所有国家与关键词组合均已完成搜索 ✅ 可使用「按最新画像重新搜索」强制重搜");
       return;
     }
 
@@ -323,7 +325,7 @@ export default function RadarSearchPage() {
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <ActionCard label={comboMatrix && comboMatrix.summary.pending === 0 ? "所有组合已完成 ✅" : "搜索未完成的国家"} hint={comboMatrix && comboMatrix.summary.pending === 0 ? "所有关键词×国家组合均已搜索" : `逐国搜索 (${Array.from(selectedCountries).length} 国, ${comboMatrix?.summary.pending || "?"} 组合待搜)`} icon={Play} active={actionState === "start"} disabled={!canStartSearch || (comboMatrix?.summary?.pending === 0)} onClick={() => runSearch("start")} primary />
-            <ActionCard label="按最新画像重新搜索" hint="用当前画像摘要再跑一轮" icon={RefreshCw} active={actionState === "restart"} disabled={!canStartSearch} onClick={() => runSearch("restart")} />
+            <ActionCard label="按最新画像重新搜索" hint="强制重新搜索所有已选国家（忽略矩阵状态）" icon={RefreshCw} active={actionState === "restart"} disabled={!canStartSearch} onClick={() => runSearch("restart")} />
             <ActionCard label={activeProfiles.length ? "暂停自动搜索" : "恢复自动搜索"} hint={activeProfiles.length ? "暂停当前搜索计划" : "恢复已有搜索计划"} icon={activeProfiles.length ? Pause : Play} active={actionState === "pause" || actionState === "resume"} disabled={!activeProfiles.length && !pausedProfiles.length} onClick={() => toggleAutomation(activeProfiles.length ? "pause" : "resume")} />
             <Link href="/customer/radar/candidates" className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] px-4 py-4 transition-colors hover:border-[var(--ci-accent)]/35 hover:bg-[var(--ci-surface-muted)]"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-semibold text-[#0B1B2B]">查看 AI 推荐</div><div className="mt-1 text-xs text-slate-500">查看 AI 为您筛选的潜在客户</div></div><ChevronRight size={18} className="text-[var(--ci-accent)]" /></div></Link>
           </div>
