@@ -137,8 +137,9 @@ export default function RadarSearchPage() {
   const [sources, setSources] = useState<RadarSourceData[]>([]);
   const [tasks, setTasks] = useState<DiscoveryTask[]>([]);
 
-  // 新增: 国家选择 & 搜索进度矩阵
+  // 新增: 国家选择 & 关键词选择 & 搜索进度矩阵
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
+  const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
   const [comboMatrix, setComboMatrix] = useState<SearchComboMatrix | null>(null);
   const [searchProgress, setSearchProgress] = useState<{ current: number; total: number; currentCountry: string } | null>(null);
 
@@ -177,6 +178,9 @@ export default function RadarSearchPage() {
       if (specCountries.length > 0 && selectedCountries.size === 0) {
         setSelectedCountries(new Set(specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[]));
       }
+      if (specKeywords.length > 0 && selectedKeywords.size === 0) {
+        setSelectedKeywords(new Set(specKeywords));
+      }
 
       if (specKeywords.length > 0 && specCountries.length > 0) {
         const isoCountries = specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[];
@@ -214,16 +218,11 @@ export default function RadarSearchPage() {
     }
 
     const countries = Array.from(selectedCountries);
-    if (countries.length === 0) {
-      setError("请至少选择一个目标国家。");
-      return;
-    }
+    if (countries.length === 0) { setError("请至少选择一个目标国家。"); return; }
+    if (selectedKeywords.size === 0) { setError("请至少选择一个关键词。"); return; }
 
-    const allKeywords = segmentation?.technographic?.keywords || [];
-    if (allKeywords.length === 0) {
-      setError("当前画像没有关键词。");
-      return;
-    }
+    const allKeywords = Array.from(selectedKeywords);
+    if (allKeywords.length === 0) { setError("当前画像没有关键词。"); return; }
 
     // 构建所有 (keyword × country) 组合
     type Combo = { keyword: string; country: string };
@@ -385,6 +384,40 @@ export default function RadarSearchPage() {
             })}
           </div>
           <div className="mt-3 text-xs text-slate-400">已选 {selectedCountries.size}/{segmentation?.firmographic?.countries?.length || 0} 个国家</div>
+        </section>
+      ) : null}
+
+      {/* ====== 关键词选择器 ====== */}
+      {segmentation?.technographic?.keywords?.length ? (
+        <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
+          <SectionHeader eyebrow="选择关键词" title="手动选择要搜索的关键词" description="只搜索选中的关键词。已完成的关键词×国家组合会自动跳过。" />
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button onClick={() => setSelectedKeywords(new Set(segmentation?.technographic?.keywords || []))} className="rounded-lg border border-[var(--ci-border)] px-3 py-1.5 text-xs font-medium text-[var(--ci-accent)] hover:bg-[var(--ci-surface-muted)] transition-colors">全选</button>
+            <button onClick={() => setSelectedKeywords(new Set())} className="rounded-lg border border-[var(--ci-border)] px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-[var(--ci-surface-muted)] transition-colors">取消</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(segmentation?.technographic?.keywords || []).map(kw => {
+              const isSelected = selectedKeywords.has(kw);
+              return (
+                <button
+                  key={kw}
+                  onClick={() => {
+                    const next = new Set(selectedKeywords);
+                    if (isSelected) next.delete(kw); else next.add(kw);
+                    setSelectedKeywords(next);
+                  }}
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-all ${
+                    isSelected
+                      ? "border-[var(--ci-accent)]/40 bg-[var(--ci-accent)]/8 text-[var(--ci-accent)]"
+                      : "border-[var(--ci-border)] bg-white text-slate-600 hover:border-[var(--ci-accent)]/25"
+                  }`}
+                >
+                  {kw}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 text-xs text-slate-400">已选 {selectedKeywords.size}/{segmentation?.technographic?.keywords?.length || 0} 个关键词</div>
         </section>
       ) : null}
 
