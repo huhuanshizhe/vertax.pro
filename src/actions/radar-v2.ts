@@ -2127,10 +2127,12 @@ export interface SearchComboMatrix {
  * 通过分析已完成的 RadarTask 记录，确定哪些 (关键词 × 国家) 组合已经被搜索过
  */
 export async function getSearchComboMatrix(
-  tenantId: string,
   keywords: string[],
   countries: string[]
 ): Promise<SearchComboMatrix> {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
+  const tenantId = session.user.tenantId;
   const countryLabels: Record<string, string> = {
     VN: '越南', TH: '泰国', ID: '印尼', MY: '马来西亚', PH: '菲律宾',
     SG: '新加坡', IN: '印度', MX: '墨西哥', TR: '土耳其', SA: '沙特',
@@ -2222,4 +2224,29 @@ export async function getSearchComboMatrix(
     cells,
     summary: { total, completed, pending: total - completed },
   };
+}
+
+/**
+ * 清理卡住的 RUNNING 任务（超过 10 分钟仍为 RUNNING 状态）
+ */
+export async function cleanupStuckTasks(): Promise<{ fixed: number }> {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
+
+  const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000);
+
+  const result = await prisma.radarTask.updateMany({
+    where: {
+      tenantId: session.user.tenantId,
+      status: 'RUNNING',
+      startedAt: { lt: tenMinutesAgo },
+    },
+    data: {
+      status: 'FAILED',
+      completedAt: new Date(),
+      errorMessage: 'Auto-cleaned: task stuck in RUNNING for >10 minutes',
+    },
+  });
+
+  return { fixed: result.count };
 }

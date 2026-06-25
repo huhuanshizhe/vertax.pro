@@ -32,6 +32,7 @@ import {
   initializeSystemSourcesV2,
   runDiscoveryByCountries,
   getSearchComboMatrix,
+  cleanupStuckTasks,
   toggleRadarSearchProfileActive,
   type RadarSearchProfileData,
   type RadarSourceData,
@@ -145,6 +146,9 @@ export default function RadarSearchPage() {
     try {
       await initializeSystemSourcesV2().catch(() => null);
 
+      // 自动清理卡住的任务
+      await cleanupStuckTasks().catch(() => null);
+
       const [pipelineData, statsData, targetingData, channelData, profileData, sourceData, taskData] =
         await Promise.all([
           getRadarPipelineStatus(),
@@ -173,11 +177,8 @@ export default function RadarSearchPage() {
       }
 
       if (specKeywords.length > 0 && specCountries.length > 0) {
-        const tenantId = (pipelineData as any)?.tenantId;
         const isoCountries = specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[];
-        if (tenantId) {
-          getSearchComboMatrix(tenantId, specKeywords, isoCountries).then(setComboMatrix).catch(() => null);
-        }
+        getSearchComboMatrix(specKeywords, isoCountries).then(setComboMatrix).catch(() => null);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载自动搜索页失败");
