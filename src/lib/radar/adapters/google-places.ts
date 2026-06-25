@@ -222,7 +222,7 @@ export class GooglePlacesAdapter implements RadarAdapter {
     query: RadarSearchQuery
   ): Promise<PlaceResultNew[]> {
     const perPage = 20;
-    const maxPages = 2;  // 安全阀：最多 40 条，确保 Vercel Hobby 60s 内完成
+    const maxPages = 3;  // 最多 60 条（Google 自然上限）
     const allResults: PlaceResultNew[] = [];
     let pageToken: string | undefined;
     

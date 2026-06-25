@@ -207,9 +207,12 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
       if (page > 100) break;
     }
 
-    if (autoEnrichQueue.length > 0) {
-      await autoEnrichDiscoveredCandidates(autoEnrichQueue, stats);
-    }
+    // 跳过自动联系人补全以适配 Vercel Hobby 60s 限制
+    // autoEnrich 对每个候选调用外部 API，40个候选远超时限
+    // TODO: 改为异步队列或定时任务处理
+    // if (autoEnrichQueue.length > 0) {
+    //   await autoEnrichDiscoveredCandidates(autoEnrichQueue, stats);
+    // }
 
     stats.duration = Date.now() - startTime;
 
