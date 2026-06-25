@@ -374,7 +374,6 @@ export async function runDiscoveryTaskV2(taskId: string): Promise<SyncResultData
   const session = await auth();
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
   
-  // 妤犲矁鐦夋禒璇插鐏炵偘绨ぐ鎾冲缁夌喐鍩?
   const task = await prisma.radarTask.findUnique({
     where: { id: taskId },
   });
@@ -384,6 +383,95 @@ export async function runDiscoveryTaskV2(taskId: string): Promise<SyncResultData
   }
   
   return runRadarTask(taskId);
+}
+
+/**
+ * 逐国迭代搜索：对每个国家依次发起 Google Places 搜索，汇总结果
+ */
+export async function runDiscoveryByCountries(input: {
+  name: string;
+  queryConfig: RadarSearchQuery;
+  selectedCountries: string[];
+  targetingRef?: { specVersionId?: string };
+}): Promise<{
+  success: boolean;
+  countriesSearched: number;
+  totalFetched: number;
+  totalCreated: number;
+  totalDuplicates: number;
+  errors: string[];
+  perCountry: Array<{
+    country: string;
+    fetched: number;
+    created: number;
+    duplicates: number;
+    error?: string;
+  }>;
+}> {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
+
+  const perCountry: Array<{
+    country: string;
+    fetched: number;
+    created: number;
+    duplicates: number;
+    error?: string;
+  }> = [];
+  
+  let totalFetched = 0;
+  let totalCreated = 0;
+  let totalDuplicates = 0;
+  const errors: string[] = [];
+
+  for (const country of input.selectedCountries) {
+    try {
+      const singleCountryQuery: RadarSearchQuery = {
+        ...input.queryConfig,
+        countries: [country],
+      };
+
+      const task = await createDiscoveryTaskV2({
+        name: `${input.name} - ${country}`,
+        queryConfig: singleCountryQuery,
+        targetingRef: input.targetingRef,
+      });
+
+      const result = await runRadarTask(task.id);
+
+      perCountry.push({
+        country,
+        fetched: result.stats.fetched,
+        created: result.stats.created,
+        duplicates: result.stats.duplicates,
+        error: result.stats.errors?.[0],
+      });
+
+      totalFetched += result.stats.fetched;
+      totalCreated += result.stats.created;
+      totalDuplicates += result.stats.duplicates;
+      if (result.stats.errors?.length) {
+        errors.push(`${country}: ${result.stats.errors[0]}`);
+      }
+
+      // 速率限制：国际 API 间隔 1.5s
+      await new Promise(r => setTimeout(r, 1500));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      perCountry.push({ country, fetched: 0, created: 0, duplicates: 0, error: msg });
+      errors.push(`${country}: ${msg}`);
+    }
+  }
+
+  return {
+    success: errors.length === 0,
+    countriesSearched: input.selectedCountries.length,
+    totalFetched,
+    totalCreated,
+    totalDuplicates,
+    errors,
+    perCountry,
+  };
 }
 
 /**
@@ -2013,5 +2101,125 @@ export async function enrichProspectCompaniesBatchAction(
       contactsFound,
     },
     results,
+  };
+}
+
+// ==================== 搜索组合进度矩阵 ====================
+
+export interface SearchComboCell {
+  keyword: string;
+  country: string;
+  status: 'pending' | 'completed';
+  lastSearchedAt: string | null;
+  resultCount: number;
+  newCount: number;
+}
+
+export interface SearchComboMatrix {
+  keywords: string[];
+  countries: Array<{ code: string; label: string }>;
+  cells: SearchComboCell[];
+  summary: { total: number; completed: number; pending: number };
+}
+
+/**
+ * 获取搜索组合进度矩阵
+ * 通过分析已完成的 RadarTask 记录，确定哪些 (关键词 × 国家) 组合已经被搜索过
+ */
+export async function getSearchComboMatrix(
+  tenantId: string,
+  keywords: string[],
+  countries: string[]
+): Promise<SearchComboMatrix> {
+  const countryLabels: Record<string, string> = {
+    VN: '越南', TH: '泰国', ID: '印尼', MY: '马来西亚', PH: '菲律宾',
+    SG: '新加坡', IN: '印度', MX: '墨西哥', TR: '土耳其', SA: '沙特',
+    AE: '阿联酋', US: '美国', CA: '加拿大', BR: '巴西', CO: '哥伦比亚',
+    CL: '智利', PE: '秘鲁', AU: '澳大利亚', GB: '英国', DE: '德国',
+    FR: '法国', ES: '西班牙', IT: '意大利', PL: '波兰', CZ: '捷克',
+    JP: '日本', KR: '韩国', ZA: '南非', EG: '埃及', NG: '尼日利亚',
+    KE: '肯尼亚', PK: '巴基斯坦', BD: '孟加拉', MM: '缅甸', KH: '柬埔寨',
+    LA: '老挝',
+  };
+
+  const countryInfos = countries.map(c => ({
+    code: c,
+    label: countryLabels[c] || c,
+  }));
+
+  // 查询最近 30 天内完成的 RadarTask
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const completedTasks = await prisma.radarTask.findMany({
+    where: {
+      tenantId,
+      status: 'COMPLETED',
+      completedAt: { gte: thirtyDaysAgo },
+    },
+    select: {
+      queryConfig: true,
+      stats: true,
+      completedAt: true,
+    },
+    orderBy: { completedAt: 'desc' },
+    take: 200,
+  });
+
+  // 从任务的 queryConfig 中提取已搜过的 (keyword, country) 组合
+  const searched = new Map<string, { lastSearchedAt: string; resultCount: number; newCount: number }>();
+
+  for (const task of completedTasks) {
+    const config = task.queryConfig as RadarSearchQuery | null;
+    if (!config) continue;
+
+    const taskKeywords = config.keywords || [];
+    const taskCountries = config.countries || [];
+    const stats = task.stats as { fetched?: number; created?: number } | null;
+    const completedAt = task.completedAt?.toISOString() || '';
+
+    for (const kw of taskKeywords) {
+      for (const c of taskCountries) {
+        const key = `${kw.toLowerCase()}|${c}`;
+        const existing = searched.get(key);
+        // 保留最新的搜索记录
+        if (!existing || completedAt > existing.lastSearchedAt) {
+          searched.set(key, {
+            lastSearchedAt: completedAt,
+            resultCount: (existing?.resultCount || 0) + (stats?.fetched || 0),
+            newCount: (existing?.newCount || 0) + (stats?.created || 0),
+          });
+        }
+      }
+    }
+  }
+
+  // 构建完整矩阵
+  const cells: SearchComboCell[] = [];
+  let completed = 0;
+
+  for (const keyword of keywords) {
+    for (const country of countries) {
+      const key = `${keyword.toLowerCase()}|${country}`;
+      const record = searched.get(key);
+      const isCompleted = !!record;
+      if (isCompleted) completed++;
+
+      cells.push({
+        keyword,
+        country,
+        status: isCompleted ? 'completed' : 'pending',
+        lastSearchedAt: record?.lastSearchedAt || null,
+        resultCount: record?.resultCount || 0,
+        newCount: record?.newCount || 0,
+      });
+    }
+  }
+
+  const total = cells.length;
+
+  return {
+    keywords,
+    countries: countryInfos,
+    cells,
+    summary: { total, completed, pending: total - completed },
   };
 }

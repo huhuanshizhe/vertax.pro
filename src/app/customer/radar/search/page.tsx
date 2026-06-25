@@ -30,13 +30,17 @@ import {
   getRadarSearchProfiles,
   getRadarStatsV2,
   initializeSystemSourcesV2,
-  runDiscoveryTaskV2,
+  runDiscoveryByCountries,
+  getSearchComboMatrix,
   toggleRadarSearchProfileActive,
   type RadarSearchProfileData,
   type RadarSourceData,
+  type SearchComboMatrix,
+  type SearchComboCell,
 } from "@/actions/radar-v2";
 import type { RadarSearchQuery } from "@/lib/radar/adapters/types";
-import { normalizeCountryCode } from "@/lib/radar/country-utils";
+import { normalizeCountryCode, getCountryDisplayName } from "@/lib/radar/country-utils";
+import { CheckCircle2, Circle, Globe, MapPin } from "lucide-react";
 
 interface ArtifactVersion<T> {
   id: string;
@@ -130,6 +134,11 @@ export default function RadarSearchPage() {
   const [sources, setSources] = useState<RadarSourceData[]>([]);
   const [tasks, setTasks] = useState<DiscoveryTask[]>([]);
 
+  // 新增: 国家选择 & 搜索进度矩阵
+  const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
+  const [comboMatrix, setComboMatrix] = useState<SearchComboMatrix | null>(null);
+  const [searchProgress, setSearchProgress] = useState<{ current: number; total: number; currentCountry: string } | null>(null);
+
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -153,6 +162,23 @@ export default function RadarSearchPage() {
       setProfiles(profileData);
       setSources(sourceData);
       setTasks(taskData);
+
+      // 初始化国家选择和进度矩阵
+      const spec = (targetingData as ArtifactVersion<TargetingSpecContent> | null)?.content?.targetingSpec;
+      const specCountries = spec?.segmentation?.firmographic?.countries || [];
+      const specKeywords = spec?.segmentation?.technographic?.keywords || [];
+      
+      if (specCountries.length > 0 && selectedCountries.size === 0) {
+        setSelectedCountries(new Set(specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[]));
+      }
+
+      if (specKeywords.length > 0 && specCountries.length > 0) {
+        const tenantId = (pipelineData as any)?.tenantId;
+        const isoCountries = specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[];
+        if (tenantId) {
+          getSearchComboMatrix(tenantId, specKeywords, isoCountries).then(setComboMatrix).catch(() => null);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "加载自动搜索页失败");
     } finally {
@@ -183,19 +209,51 @@ export default function RadarSearchPage() {
       setError("当前画像还没有可执行的国家、行业或关键词，请先同步目标客户画像。");
       return;
     }
+
+    const countries = Array.from(selectedCountries);
+    if (countries.length === 0) {
+      setError("请至少选择一个目标国家。");
+      return;
+    }
+
+    // 过滤掉已完成的组合
+    const pendingCountries = comboMatrix
+      ? countries.filter(c => {
+          const hasPending = comboMatrix.cells.some(
+            cell => cell.country === c && cell.status === 'pending'
+          );
+          return hasPending;
+        })
+      : countries;
+
+    if (pendingCountries.length === 0) {
+      toast.info("所有国家与关键词组合均已完成搜索 ✅");
+      return;
+    }
+
     setActionState(mode);
+    setSearchProgress({ current: 0, total: pendingCountries.length, currentCountry: pendingCountries[0] });
+
     try {
-      const task = await createDiscoveryTaskV2({
-        name: mode === "restart" ? "按最新画像重新搜索" : "按当前画像开始自动搜索",
+      const result = await runDiscoveryByCountries({
+        name: mode === "restart" ? "按最新画像重新搜索" : "按当前画像搜索",
         queryConfig: effectiveQuery,
+        selectedCountries: pendingCountries,
         targetingRef: { specVersionId: targetingVersion.id },
       });
-      const result = await runDiscoveryTaskV2(task.id);
+
       if (result.success) {
-        toast.success(mode === "restart" ? "已按最新画像重新搜索" : "自动搜索已启动", {
-          description: `新增 ${result.stats.created} 家公司，去重 ${result.stats.duplicates} 家。`,
+        toast.success("全部国家搜索完成", {
+          description: `共搜索 ${result.countriesSearched} 个国家，新增 ${result.totalCreated} 家公司，去重 ${result.totalDuplicates} 家。`,
         });
+      } else if (result.errors.length < result.countriesSearched) {
+        toast.warning("部分国家搜索完成", {
+          description: `${result.countriesSearched - result.errors.length}/${result.countriesSearched} 成功。新增 ${result.totalCreated} 家。`,
+        });
+      } else {
+        toast.error("搜索失败", { description: result.errors.join("; ") });
       }
+
       await loadData();
     } catch (err) {
       const message = err instanceof Error ? err.message : "自动搜索执行失败";
@@ -203,6 +261,7 @@ export default function RadarSearchPage() {
       toast.error("自动搜索执行失败", { description: message });
     } finally {
       setActionState(null);
+      setSearchProgress(null);
     }
   };
 
@@ -243,7 +302,7 @@ export default function RadarSearchPage() {
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <ActionCard label="开始自动搜索" hint="按当前画像立即执行一轮" icon={Play} active={actionState === "start"} disabled={!canStartSearch} onClick={() => runSearch("start")} primary />
+            <ActionCard label={comboMatrix && comboMatrix.summary.pending === 0 ? "所有组合已完成 ✅" : "搜索未完成的国家"} hint={comboMatrix && comboMatrix.summary.pending === 0 ? "所有关键词×国家组合均已搜索" : `逐国搜索 (${Array.from(selectedCountries).length} 国, ${comboMatrix?.summary.pending || "?"} 组合待搜)`} icon={Play} active={actionState === "start"} disabled={!canStartSearch || (comboMatrix?.summary?.pending === 0)} onClick={() => runSearch("start")} primary />
             <ActionCard label="按最新画像重新搜索" hint="用当前画像摘要再跑一轮" icon={RefreshCw} active={actionState === "restart"} disabled={!canStartSearch} onClick={() => runSearch("restart")} />
             <ActionCard label={activeProfiles.length ? "暂停自动搜索" : "恢复自动搜索"} hint={activeProfiles.length ? "暂停当前搜索计划" : "恢复已有搜索计划"} icon={activeProfiles.length ? Pause : Play} active={actionState === "pause" || actionState === "resume"} disabled={!activeProfiles.length && !pausedProfiles.length} onClick={() => toggleAutomation(activeProfiles.length ? "pause" : "resume")} />
             <Link href="/customer/radar/candidates" className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] px-4 py-4 transition-colors hover:border-[var(--ci-accent)]/35 hover:bg-[var(--ci-surface-muted)]"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-semibold text-[#0B1B2B]">查看 AI 推荐</div><div className="mt-1 text-xs text-slate-500">查看 AI 为您筛选的潜在客户</div></div><ChevronRight size={18} className="text-[var(--ci-accent)]" /></div></Link>
@@ -253,6 +312,53 @@ export default function RadarSearchPage() {
 
       {error ? <div className="flex items-start gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />{error}</div> : null}
       {pipeline?.errors?.length ? <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700">最近一次自动搜索有异常：{pipeline.errors[0]}</div> : null}
+
+      {/* ====== 国家选择器 ====== */}
+      {segmentation?.firmographic?.countries?.length ? (
+        <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
+          <SectionHeader eyebrow="选择目标国家" title="手动选择要搜索的国家" description="勾选后点击搜索，系统将逐国执行。已完成的国家将自动跳过。" />
+          <div className="mb-4 flex flex-wrap gap-2">
+            <button onClick={() => setSelectedCountries(new Set(segmentation?.firmographic?.countries?.map(c => normalizeCountryCode(c)).filter(Boolean) as string[] || []))} className="rounded-lg border border-[var(--ci-border)] px-3 py-1.5 text-xs font-medium text-[var(--ci-accent)] hover:bg-[var(--ci-surface-muted)] transition-colors">全选</button>
+            <button onClick={() => setSelectedCountries(new Set())} className="rounded-lg border border-[var(--ci-border)] px-3 py-1.5 text-xs font-medium text-slate-500 hover:bg-[var(--ci-surface-muted)] transition-colors">取消</button>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {(segmentation?.firmographic?.countries || []).map(raw => {
+              const code = normalizeCountryCode(raw);
+              if (!code) return null;
+              const isSelected = selectedCountries.has(code);
+              const countryLabel = getCountryDisplayName(code) || code;
+              // 检查该国家的所有关键词组合是否都已完成
+              const allDone = comboMatrix
+                ? comboMatrix.cells
+                    .filter(cell => cell.country === code)
+                    .every(cell => cell.status === 'completed')
+                : false;
+              return (
+                <button
+                  key={code}
+                  onClick={() => {
+                    const next = new Set(selectedCountries);
+                    if (isSelected) next.delete(code); else next.add(code);
+                    setSelectedCountries(next);
+                  }}
+                  className={`inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-sm font-medium transition-all ${
+                    allDone
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700 cursor-default"
+                      : isSelected
+                        ? "border-[var(--ci-accent)]/40 bg-[var(--ci-accent)]/8 text-[var(--ci-accent)]"
+                        : "border-[var(--ci-border)] bg-white text-slate-600 hover:border-[var(--ci-accent)]/25"
+                  }`}
+                >
+                  <MapPin size={14} />
+                  {countryLabel}
+                  {allDone && <CheckCircle2 size={14} className="text-emerald-500" />}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-3 text-xs text-slate-400">已选 {selectedCountries.size}/{segmentation?.firmographic?.countries?.length || 0} 个国家</div>
+        </section>
+      ) : null}
 
       <div className="grid gap-6 xl:grid-cols-[1.1fr_0.9fr]">
         <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
@@ -322,14 +428,69 @@ export default function RadarSearchPage() {
       <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
         <SectionHeader eyebrow="搜索进展" title="当前搜索状态" description="查看系统最近发现了多少公司，以及哪些结果值得跟进。" />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-          <MetricCard label="自动搜索状态" value={searchStarted ? "已启动" : "未启动"} />
+          <MetricCard label="自动搜索状态" value={searchProgress ? "搜索中…" : searchStarted ? "已启动" : "未启动"} />
           <MetricCard label="最近运行" value={formatRelative(pipeline?.counts.lastScanAt || null)} />
           <MetricCard label="本轮抓取" value={latestTaskStats?.fetched ?? "—"} />
           <MetricCard label="去重数量" value={latestTaskStats?.duplicates ?? "—"} />
           <MetricCard label="新发现" value={pipeline?.counts.pendingReviewCount ?? stats?.newCandidates ?? 0} />
           <MetricCard label="已跟进线索" value={pipeline?.counts.prospectCompanyCount ?? stats?.companies ?? 0} />
         </div>
+        {searchProgress ? (
+          <div className="mt-4 rounded-xl border border-[var(--ci-accent)]/30 bg-[var(--ci-accent)]/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-[var(--ci-accent)]">
+              <Loader2 size={16} className="animate-spin" />
+              正在搜索: {getCountryDisplayName(searchProgress.currentCountry) || searchProgress.currentCountry} ({searchProgress.current + 1}/{searchProgress.total})
+            </div>
+          </div>
+        ) : null}
       </section>
+
+      {/* ====== 搜索进度矩阵 ====== */}
+      {comboMatrix && comboMatrix.cells.length > 0 ? (
+        <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
+          <SectionHeader eyebrow="搜索进度" title={`搜索组合矩阵 (${comboMatrix.summary.completed}/${comboMatrix.summary.total})`} description="每个单元格代表一个 (关键词 × 国家) 组合。✅ 已完成，○ 待搜索。" />
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr>
+                  <th className="px-3 py-2 text-left font-medium text-slate-400">关键词</th>
+                  {comboMatrix.countries.map(c => (
+                    <th key={c.code} className="px-3 py-2 text-center font-medium text-slate-400">{c.label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {comboMatrix.keywords.map((kw, i) => (
+                  <tr key={kw} className={i % 2 === 0 ? "bg-[var(--ci-surface-muted)]/50" : ""}>
+                    <td className="px-3 py-2.5 font-medium text-slate-700 max-w-[180px] truncate" title={kw}>{kw}</td>
+                    {comboMatrix.countries.map(c => {
+                      const cell = comboMatrix.cells.find(x => x.keyword === kw && x.country === c.code);
+                      const isDone = cell?.status === 'completed';
+                      return (
+                        <td key={`${kw}-${c.code}`} className="px-3 py-2.5 text-center">
+                          {isDone ? (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-emerald-700" title={`${cell!.resultCount} 条结果，${cell!.newCount} 条新增`}>
+                              <CheckCircle2 size={12} />
+                              {cell!.newCount || '✓'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-slate-300"><Circle size={12} /></span>
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3 text-xs text-slate-400">
+            {comboMatrix.summary.pending === 0
+              ? "🎉 所有组合已完成搜索！"
+              : `还有 ${comboMatrix.summary.pending} 个组合待搜索`}
+          </div>
+        </section>
+      ) : null}
 
       <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
