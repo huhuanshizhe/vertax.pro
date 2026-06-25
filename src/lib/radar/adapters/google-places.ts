@@ -195,26 +195,12 @@ export class GooglePlacesAdapter implements RadarAdapter {
   private buildSearchTextForKeywords(keywords: string[], query: RadarSearchQuery): string {
     const parts: string[] = [];
     
-    // 使用传入的关键词批次
+    // 关键词
     if (keywords.length) {
       parts.push(keywords.join(' '));
     }
-    
-    // 行业/类型
-    if (query.targetIndustries?.length) {
-      parts.push(query.targetIndustries[0]);
-    }
-    
-    // 公司类型
-    if (query.companyTypes?.length) {
-      const typeMap: Record<string, string> = {
-        manufacturer: 'manufacturer factory',
-        distributor: 'distributor supplier',
-        service_provider: 'service company',
-      };
-      parts.push(typeMap[query.companyTypes[0]] || query.companyTypes[0]);
-    }
 
+    // 国家限定
     if (query.countries?.length) {
       const countryName = getCountryDisplayName(query.countries[0]);
       if (countryName) {
@@ -264,8 +250,6 @@ export class GooglePlacesAdapter implements RadarAdapter {
       if (pageToken) {
         body.pageToken = pageToken;
       }
-
-      console.log(`[GooglePlaces] Page ${page + 1}: hasToken=${!!pageToken}, searchText="${searchText.slice(0, 60)}..."`);
     
       const response = await fetch(
         'https://places.googleapis.com/v1/places:searchText',
@@ -291,7 +275,6 @@ export class GooglePlacesAdapter implements RadarAdapter {
       
       // 检查是否有下一页
       pageToken = data.nextPageToken;
-      console.log(`[GooglePlaces] Page ${page + 1}: got ${data.places?.length || 0} places, nextPageToken=${pageToken ? pageToken.slice(0, 20) + '...' : 'null'}`);
       if (!pageToken) break;
       
       if (pageToken) await new Promise(r => setTimeout(r, 300));
