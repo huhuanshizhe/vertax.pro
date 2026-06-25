@@ -251,55 +251,45 @@ export default function RadarSearchPage() {
       return;
     }
 
+    // 每次点击只执行一个组合（取第一个未完成的）
+    const combo = pendingCombos[0];
     setActionState(mode);
+    setSearchProgress({ current: 0, total: 1, currentCountry: combo.country });
 
     let totalCreated = 0;
     let totalDuplicates = 0;
-    const errors: string[] = [];
 
-    // 逐组合调用，每个独立超时
-    for (let i = 0; i < pendingCombos.length; i++) {
-      const combo = pendingCombos[i];
-      setSearchProgress({ current: i, total: pendingCombos.length, currentCountry: combo.country });
+    try {
+      const result = await runSingleCountrySearch({
+        name: mode === "restart" ? "重新搜索" : "自动搜索",
+        queryConfig: effectiveQuery,
+        keyword: combo.keyword,
+        country: combo.country,
+        targetingRef: { specVersionId: targetingVersion.id },
+      });
 
-      try {
-        const result = await runSingleCountrySearch({
-          name: mode === "restart" ? "重新搜索" : "自动搜索",
-          queryConfig: effectiveQuery,
-          keyword: combo.keyword,
-          country: combo.country,
-          targetingRef: { specVersionId: targetingVersion.id },
+      totalCreated = result.created;
+      totalDuplicates = result.duplicates;
+
+      if (result.error) {
+        toast.error(`${combo.keyword} × ${combo.country} 搜索失败`, { description: result.error });
+      } else {
+        toast.success(`${combo.keyword} × ${combo.country} 完成`, {
+          description: `抓取 ${result.fetched} 条，新增 ${result.created} 家，去重 ${result.duplicates} 家。`,
         });
-
-        totalCreated += result.created;
-        totalDuplicates += result.duplicates;
-        if (result.error) {
-          errors.push(`${combo.keyword}×${combo.country}: ${result.error}`);
-        }
-
-        // 每完成一个组合，刷新矩阵
-        getSearchComboMatrix(allKeywords, countries.map((c: string) => c as string))
-          .then(setComboMatrix).catch(() => null);
-      } catch (err) {
-        errors.push(`${combo.keyword}×${combo.country}: ${err instanceof Error ? err.message : 'Unknown'}`);
       }
+
+      // 刷新矩阵
+      getSearchComboMatrix(allKeywords, countries.map((c: string) => c as string))
+        .then(setComboMatrix).catch(() => null);
+    } catch (err) {
+      toast.error(`${combo.keyword} × ${combo.country} 搜索失败`, {
+        description: err instanceof Error ? err.message : 'Unknown',
+      });
     }
 
     setSearchProgress(null);
     setActionState(null);
-
-    if (errors.length === 0) {
-      toast.success(`全部组合搜索完成`, {
-        description: `共 ${pendingCombos.length} 个组合，新增 ${totalCreated} 家，去重 ${totalDuplicates} 家。`,
-      });
-    } else if (errors.length < pendingCombos.length) {
-      toast.warning(`${pendingCombos.length - errors.length}/${pendingCombos.length} 组合成功`, {
-        description: `新增 ${totalCreated} 家。`,
-      });
-    } else {
-      toast.error("搜索失败", { description: errors.join("; ") });
-    }
-
     await loadData();
   };
 
@@ -340,7 +330,7 @@ export default function RadarSearchPage() {
             </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <ActionCard label={comboMatrix && comboMatrix.summary.pending === 0 ? "所有组合已完成 ✅" : "搜索未完成的组合"} hint={comboMatrix && comboMatrix.summary.pending === 0 ? `共 ${comboMatrix.summary.total} 个组合均已搜索` : `逐组合搜索 (${comboMatrix?.summary.pending || "?"} 个待搜)`} icon={Play} active={actionState === "start"} disabled={!canStartSearch || (comboMatrix?.summary?.pending === 0)} onClick={() => runSearch("start")} primary />
+            <ActionCard label={comboMatrix && comboMatrix.summary.pending === 0 ? "全部完成 ✅" : "搜索下一个组合"} hint={comboMatrix && comboMatrix.summary.pending === 0 ? `共 ${comboMatrix.summary.total} 个组合均已搜索` : `剩余 ${comboMatrix?.summary.pending || "?"} 个组合未搜索`} icon={Play} active={actionState === "start"} disabled={!canStartSearch || (comboMatrix?.summary?.pending === 0)} onClick={() => runSearch("start")} primary />
             <ActionCard label="按最新画像重新搜索" hint="强制重新搜索所有已选国家（忽略矩阵状态）" icon={RefreshCw} active={actionState === "restart"} disabled={!canStartSearch} onClick={() => runSearch("restart")} />
             <ActionCard label={activeProfiles.length ? "暂停自动搜索" : "恢复自动搜索"} hint={activeProfiles.length ? "暂停当前搜索计划" : "恢复已有搜索计划"} icon={activeProfiles.length ? Pause : Play} active={actionState === "pause" || actionState === "resume"} disabled={!activeProfiles.length && !pausedProfiles.length} onClick={() => toggleAutomation(activeProfiles.length ? "pause" : "resume")} />
             <Link href="/customer/radar/candidates" className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] px-4 py-4 transition-colors hover:border-[var(--ci-accent)]/35 hover:bg-[var(--ci-surface-muted)]"><div className="flex items-center justify-between gap-3"><div><div className="text-sm font-semibold text-[#0B1B2B]">查看 AI 推荐</div><div className="mt-1 text-xs text-slate-500">查看 AI 为您筛选的潜在客户</div></div><ChevronRight size={18} className="text-[var(--ci-accent)]" /></div></Link>
