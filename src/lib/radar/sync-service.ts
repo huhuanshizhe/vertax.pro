@@ -117,6 +117,9 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
   };
   const autoEnrichQueue: string[] = [];
 
+  // 全局超时保护：确保函数在 50 秒内完成，留 10 秒给 Vercel 收尾
+  const GLOBAL_TIMEOUT_MS = 50_000;
+
   try {
     const adapter = getAdapter(task.source.code, task.source.adapterConfig as Record<string, unknown>);
     const query = task.queryConfig as RadarSearchQuery;
@@ -140,9 +143,20 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
         break;
       }
 
-      // 执行搜索
-      const result = await adapter.search({ ...query, page });
+      // 执行搜索（带超时保护）
+      const searchPromise = adapter.search({ ...query, page });
+      const searchTimeout = new Promise<never>((_, reject) => 
+        setTimeout(() => reject(new Error(`Google Places search timed out after ${GLOBAL_TIMEOUT_MS/1000}s`)), 
+        Math.max(1000, GLOBAL_TIMEOUT_MS - (Date.now() - startTime) - 10000))
+      );
+      const result = await Promise.race([searchPromise, searchTimeout]);
       stats.fetched += result.items.length;
+
+      // 超时检查：如果快超时了，跳过候选处理
+      if (Date.now() - startTime > GLOBAL_TIMEOUT_MS - 10000) {
+        stats.errors.push(`Time budget exhausted after fetch, skipping ${result.items.length} candidates`);
+        break;
+      }
 
       // 并行处理候选（并发数5，避免数据库连接耗尽）
       const CONCURRENCY = 5;
@@ -174,6 +188,12 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
           } else if (r.status === 'rejected') {
             stats.errors.push(`Failed to process candidate: ${r.reason instanceof Error ? r.reason.message : 'Unknown'}`);
           }
+        }
+
+        // 批次间超时检查
+        if (Date.now() - startTime > GLOBAL_TIMEOUT_MS - 5000) {
+          stats.errors.push(`Time budget exhausted, processed ${i + batch.length}/${result.items.length} candidates`);
+          break;
         }
       }
 
