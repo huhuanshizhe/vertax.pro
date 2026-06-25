@@ -273,7 +273,9 @@ export class GooglePlacesAdapter implements RadarAdapter {
       const data: SearchTextResponse = await response.json();
       if (data.places) allResults.push(...data.places);
       
-      // 检查是否有下一页
+      // v2.1 翻页日志
+      console.log(`[GP-V21] page=${page + 1} got=${data.places?.length || 0} token=${data.nextPageToken ? 'YES' : 'NONE'} total=${allResults.length}`);
+      
       pageToken = data.nextPageToken;
       if (!pageToken) break;
       
