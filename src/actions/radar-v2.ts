@@ -2104,6 +2104,58 @@ export async function enrichProspectCompaniesBatchAction(
   };
 }
 
+// ==================== 单国搜索 ====================
+
+/**
+ * 单国搜索：创建一个任务并立即执行（用于客户端逐国调用，每个国家独立超时）
+ */
+export async function runSingleCountrySearch(input: {
+  name: string;
+  queryConfig: RadarSearchQuery;
+  country: string;
+  targetingRef?: { specVersionId?: string };
+}): Promise<{
+  country: string;
+  fetched: number;
+  created: number;
+  duplicates: number;
+  error?: string;
+}> {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
+
+  try {
+    const singleCountryQuery: RadarSearchQuery = {
+      ...input.queryConfig,
+      countries: [input.country],
+    };
+
+    const task = await createDiscoveryTaskV2({
+      name: `${input.name} - ${input.country}`,
+      queryConfig: singleCountryQuery,
+      targetingRef: input.targetingRef,
+    });
+
+    const result = await runRadarTask(task.id);
+
+    return {
+      country: input.country,
+      fetched: result.stats.fetched,
+      created: result.stats.created,
+      duplicates: result.stats.duplicates,
+      error: result.stats.errors?.[0],
+    };
+  } catch (err) {
+    return {
+      country: input.country,
+      fetched: 0,
+      created: 0,
+      duplicates: 0,
+      error: err instanceof Error ? err.message : 'Unknown error',
+    };
+  }
+}
+
 // ==================== 搜索组合进度矩阵 ====================
 
 export interface SearchComboCell {

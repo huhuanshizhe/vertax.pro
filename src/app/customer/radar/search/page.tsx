@@ -1,5 +1,7 @@
 "use client";
 
+export const maxDuration = 60; // Vercel Hobby plan max
+
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -30,7 +32,7 @@ import {
   getRadarSearchProfiles,
   getRadarStatsV2,
   initializeSystemSourcesV2,
-  runDiscoveryByCountries,
+  runSingleCountrySearch,
   getSearchComboMatrix,
   cleanupStuckTasks,
   toggleRadarSearchProfileActive,
@@ -217,13 +219,11 @@ export default function RadarSearchPage() {
       return;
     }
 
-    // 过滤掉已完成的组合
+    // 过滤掉所有组合都已完成的国家
     const pendingCountries = comboMatrix
       ? countries.filter(c => {
-          const hasPending = comboMatrix.cells.some(
-            cell => cell.country === c && cell.status === 'pending'
-          );
-          return hasPending;
+          const countryCells = comboMatrix.cells.filter(cell => cell.country === c);
+          return countryCells.some(cell => cell.status === 'pending');
         })
       : countries;
 
@@ -233,37 +233,56 @@ export default function RadarSearchPage() {
     }
 
     setActionState(mode);
-    setSearchProgress({ current: 0, total: pendingCountries.length, currentCountry: pendingCountries[0] });
 
-    try {
-      const result = await runDiscoveryByCountries({
-        name: mode === "restart" ? "按最新画像重新搜索" : "按当前画像搜索",
-        queryConfig: effectiveQuery,
-        selectedCountries: pendingCountries,
-        targetingRef: { specVersionId: targetingVersion.id },
-      });
+    let totalCreated = 0;
+    let totalDuplicates = 0;
+    const errors: string[] = [];
 
-      if (result.success) {
-        toast.success("全部国家搜索完成", {
-          description: `共搜索 ${result.countriesSearched} 个国家，新增 ${result.totalCreated} 家公司，去重 ${result.totalDuplicates} 家。`,
+    // 客户端逐国调用，每个国家独立超时
+    for (let i = 0; i < pendingCountries.length; i++) {
+      const country = pendingCountries[i];
+      setSearchProgress({ current: i, total: pendingCountries.length, currentCountry: country });
+
+      try {
+        const result = await runSingleCountrySearch({
+          name: mode === "restart" ? "按最新画像重新搜索" : "按当前画像搜索",
+          queryConfig: effectiveQuery,
+          country,
+          targetingRef: { specVersionId: targetingVersion.id },
         });
-      } else if (result.errors.length < result.countriesSearched) {
-        toast.warning("部分国家搜索完成", {
-          description: `${result.countriesSearched - result.errors.length}/${result.countriesSearched} 成功。新增 ${result.totalCreated} 家。`,
-        });
-      } else {
-        toast.error("搜索失败", { description: result.errors.join("; ") });
+
+        totalCreated += result.created;
+        totalDuplicates += result.duplicates;
+        if (result.error) {
+          errors.push(`${country}: ${result.error}`);
+        }
+
+        // 每完成一个国家，刷新矩阵
+        const specKeywords = segmentation?.technographic?.keywords || [];
+        if (specKeywords.length > 0) {
+          getSearchComboMatrix(specKeywords, countries.map((c: string) => c as string)).then(setComboMatrix).catch(() => null);
+        }
+      } catch (err) {
+        errors.push(`${country}: ${err instanceof Error ? err.message : 'Unknown error'}`);
       }
-
-      await loadData();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "自动搜索执行失败";
-      setError(message);
-      toast.error("自动搜索执行失败", { description: message });
-    } finally {
-      setActionState(null);
-      setSearchProgress(null);
     }
+
+    setSearchProgress(null);
+    setActionState(null);
+
+    if (errors.length === 0) {
+      toast.success("全部国家搜索完成", {
+        description: `共搜索 ${pendingCountries.length} 个国家，新增 ${totalCreated} 家公司，去重 ${totalDuplicates} 家。`,
+      });
+    } else if (errors.length < pendingCountries.length) {
+      toast.warning("部分国家搜索完成", {
+        description: `${pendingCountries.length - errors.length}/${pendingCountries.length} 成功。新增 ${totalCreated} 家。`,
+      });
+    } else {
+      toast.error("搜索失败", { description: errors.join("; ") });
+    }
+
+    await loadData();
   };
 
   const toggleAutomation = async (mode: "pause" | "resume") => {
