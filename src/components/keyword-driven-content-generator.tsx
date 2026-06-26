@@ -60,6 +60,7 @@ export default function KeywordDrivenContentGenerator() {
 
   // 配图生成状态
   const [generatedImages, setGeneratedImages] = useState<Record<string, string | null>>({});
+  const [generatingImages, setGeneratingImages] = useState<Record<string, boolean>>({});
 
   // 审核 & 发布状态 (key = "keyword|platform")
   const [approvedItems, setApprovedItems] = useState<Record<string, boolean>>({});

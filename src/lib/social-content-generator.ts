@@ -92,7 +92,7 @@ export async function generateContentFromKeyword(
 
     // 5. 调用AI生成内容
     const response = await aiClient.chat.completions.create({
-      model: process.env.AI_MODEL || "qwen-plus",
+      model: undefined,
       messages: [
         { role: "system", content: CONTENT_GENERATION_SYSTEM_PROMPT },
         { role: "user", content: generationPrompt },

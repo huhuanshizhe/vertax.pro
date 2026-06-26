@@ -25,6 +25,7 @@ export const authConfig: NextAuthConfig = {
     signIn: "/login",
   },
   // providers are defined in auth.ts to avoid Edge runtime issues with Prisma
+  providers: [],
   callbacks: {
     async jwt({ token, user }) {
       if (user) {

@@ -244,7 +244,7 @@ ${profile ? `
 
   try {
     const response = await aiClient.chat.completions.create({
-      model: "deepseek-v3",
+      model: undefined,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `主题：${topic}` },
@@ -327,7 +327,7 @@ ${profile ? `
 
   try {
     const response = await aiClient.chat.completions.create({
-      model: "deepseek-v3",
+      model: undefined,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: `目标关键词：${keyword}\n内容类型：${typeLabels[contentType]}` },

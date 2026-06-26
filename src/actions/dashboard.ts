@@ -385,7 +385,7 @@ export async function generateAIBriefing(): Promise<AIBriefing> {
 
   try {
     const response = await aiClient.chat.completions.create({
-      model: "deepseek-v3",
+      model: undefined,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: "请生成今日决策简报" },

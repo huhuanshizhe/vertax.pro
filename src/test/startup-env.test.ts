@@ -10,7 +10,7 @@ describe("startup-env", () => {
     vi.stubEnv("DATABASE_URL", "postgres://example");
     vi.stubEnv("AUTH_SECRET", "secret");
     vi.stubEnv("CRON_SECRET", "cron-secret");
-    vi.stubEnv("DASHSCOPE_API_KEY", "dashscope-key");
+    vi.stubEnv("TEXT_API_KEY", "text-api-key");
 
     const validation = validateStartupEnv();
 
@@ -22,7 +22,7 @@ describe("startup-env", () => {
     vi.stubEnv("AUTH_SECRET", "");
     vi.stubEnv("JWT_SECRET", "");
     vi.stubEnv("CRON_SECRET", "cron-secret");
-    vi.stubEnv("DASHSCOPE_API_KEY", "dashscope-key");
+    vi.stubEnv("TEXT_API_KEY", "text-api-key");
 
     const validation = validateStartupEnv();
 

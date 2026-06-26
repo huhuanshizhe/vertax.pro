@@ -265,7 +265,7 @@ ${icp ? `
 
   try {
     const response = await aiClient.chat.completions.create({
-      model: "deepseek-v3",
+      model: undefined,
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: userPrompt },

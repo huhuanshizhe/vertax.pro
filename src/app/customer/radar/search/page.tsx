@@ -278,27 +278,40 @@ export default function RadarSearchPage() {
           description: `抓取 ${result.fetched} 条，新增 ${result.created} 家，去重 ${result.duplicates} 家。`,
         });
 
-        // 自动触发联系人补全 + 入库
+        // 自动触发联系人补全 + 入库（分批调用，每批 ≤6 家以适配 Vercel 60s 限制）
         if (result.candidateIds.length > 0) {
-          const enrichToastId = toast.loading(
-            `正在自动补全 ${result.candidateIds.length} 家企业的联系方式…`
-          );
-          try {
-            const enrichStats = await autoEnrichAndImportCandidates(result.candidateIds);
-            toast.dismiss(enrichToastId);
-            if (enrichStats.imported > 0) {
-              toast.success(
-                `自动补全完成：${enrichStats.enriched} 家已补全，${enrichStats.imported} 家已自动移入线索库`
-              );
-            } else if (enrichStats.enriched > 0) {
-              toast.success(`已为 ${enrichStats.enriched} 家企业补全联系方式`);
+          const BATCH_SIZE = 6;
+          let totalEnriched = 0;
+          let totalImported = 0;
+          const allErrors: string[] = [];
+          const totalBatches = Math.ceil(result.candidateIds.length / BATCH_SIZE);
+
+          for (let bi = 0; bi < result.candidateIds.length; bi += BATCH_SIZE) {
+            const batch = result.candidateIds.slice(bi, bi + BATCH_SIZE);
+            const batchNum = Math.floor(bi / BATCH_SIZE) + 1;
+            const enrichToastId = toast.loading(
+              `正在自动补全 ${batchNum}/${totalBatches} 批（${Math.min(bi + BATCH_SIZE, result.candidateIds.length)}/${result.candidateIds.length} 家）…`
+            );
+            try {
+              const stats = await autoEnrichAndImportCandidates(batch);
+              totalEnriched += stats.enriched;
+              totalImported += stats.imported;
+              allErrors.push(...stats.errors);
+            } catch {
+              allErrors.push(`批次 ${batchNum} 失败`);
             }
-            if (enrichStats.errors.length > 0) {
-              console.warn('[autoEnrich] Errors:', enrichStats.errors);
-            }
-          } catch {
             toast.dismiss(enrichToastId);
-            toast.warning('自动补全部分完成，可稍后手动刷新');
+          }
+
+          if (totalImported > 0) {
+            toast.success(
+              `自动补全完成：${totalEnriched} 家已补全，${totalImported} 家已自动移入线索库`
+            );
+          } else if (totalEnriched > 0) {
+            toast.success(`已为 ${totalEnriched} 家企业补全联系方式`);
+          }
+          if (allErrors.length > 0) {
+            console.warn('[autoEnrich] Errors:', allErrors);
           }
         }
       }

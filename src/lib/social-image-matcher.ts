@@ -186,7 +186,7 @@ async function generateImagePrompt(
   // 调用AI优化提示词
   try {
     const response = await aiClient.chat.completions.create({
-      model: process.env.AI_MODEL || "qwen-plus",
+      model: undefined,
       messages: [
         { role: "system", content: IMAGE_PROMPT_SYSTEM_PROMPT },
         { role: "user", content: prompt },

@@ -128,8 +128,8 @@ const _PPT_MIME_TYPES = new Set([
  * 上传文件到 DashScope Files API，返回 file_id
  */
 async function uploadToDashScope(buffer: Buffer, filename: string): Promise<string> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
-  if (!apiKey) throw new Error("DASHSCOPE_API_KEY not configured");
+  const apiKey = process.env.TEXT_API_KEY;
+  if (!apiKey) throw new Error("TEXT_API_KEY not configured");
 
   const formData = new FormData();
   // Convert Buffer to Uint8Array to avoid SharedArrayBuffer type issues
@@ -163,8 +163,8 @@ async function uploadToDashScope(buffer: Buffer, filename: string): Promise<stri
  * 使用 qwen-long 对上传的文件进行 OCR / 文本提取
  */
 async function extractWithQwenLong(fileId: string): Promise<string> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
-  if (!apiKey) throw new Error("DASHSCOPE_API_KEY not configured");
+  const apiKey = process.env.TEXT_API_KEY;
+  if (!apiKey) throw new Error("TEXT_API_KEY not configured");
 
   const res = await fetch(
     "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
@@ -232,9 +232,9 @@ async function transcribeWithParaformer(
   audioBuffer: Buffer,
   mimeType: string
 ): Promise<string> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const apiKey = process.env.TEXT_API_KEY;
   if (!apiKey) {
-    throw new Error("DASHSCOPE_API_KEY not configured for transcription");
+    throw new Error("TEXT_API_KEY not configured for transcription");
   }
 
   // 获取文件扩展名
@@ -624,9 +624,9 @@ export async function extractStructuredData(
   extractionType: ExtractionType,
   customPrompt?: string
 ): Promise<unknown[]> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const apiKey = process.env.TEXT_API_KEY;
   if (!apiKey) {
-    throw new Error("DASHSCOPE_API_KEY not configured");
+    throw new Error("TEXT_API_KEY not configured");
   }
 
   const prompt = customPrompt || EXTRACTION_PROMPTS[extractionType];
@@ -637,7 +637,7 @@ export async function extractStructuredData(
     : text;
 
   const response = await fetch(
-    "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+    "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
     {
       method: "POST",
       headers: {

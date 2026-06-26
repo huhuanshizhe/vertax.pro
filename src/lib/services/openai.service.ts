@@ -48,7 +48,7 @@ export async function generateSocialContent(
     .join("\n");
 
   const response = await aiClient.chat.completions.create({
-    model: process.env.AI_MODEL || "qwen-plus",
+    model: undefined,
     messages: [
       { role: "system", content: platformPrompt },
       { role: "user", content: userPrompt },
@@ -136,7 +136,7 @@ Use markdown formatting with ## headings. Keep it under 300 words.
 ${langInstruction}`;
 
   const response = await client.chat.completions.create({
-    model: process.env.AI_MODEL || "qwen-plus",
+    model: undefined,
     messages: [
       {
         role: "system",

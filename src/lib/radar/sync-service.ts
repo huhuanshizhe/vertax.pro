@@ -11,12 +11,13 @@ import {
 import { enrichCandidateIntelligence } from './intelligence-enricher';
 import type { RadarTask, RadarSource } from '@prisma/client';
 
-const AUTO_CONTACT_ENRICH_MAX_CANDIDATES = 5;
-
 /**
- * 限制自动补全数量以适配 Vercel Hobby 60s 限制
- * 剩余候选由前端后续自动触发补全
+ * 自动补全时间预算（毫秒）
+ * Vercel Hobby 60s 限制 → 留给补全 45s，留 15s 给任务收尾
  */
+const AUTO_CONTACT_ENRICH_TIME_BUDGET_MS = 45_000;
+/** 单次补全最短剩余时间阈值——低于此值不再启动新批次 */
+const AUTO_CONTACT_ENRICH_MIN_REMAINING_MS = 10_000;
 
 export interface SyncResult {
   success: boolean;
@@ -212,11 +213,28 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
       if (page > 100) break;
     }
 
-    // 自动联系人补全（限制数量以适配 Vercel Hobby 60s）
+    // 自动联系人补全（时间预算驱动，尽可能多补全）
     if (autoEnrichQueue.length > 0) {
-      const enrichBatch = autoEnrichQueue.slice(0, AUTO_CONTACT_ENRICH_MAX_CANDIDATES);
-      console.log(`[runRadarTask] Auto-enriching ${enrichBatch.length}/${autoEnrichQueue.length} candidates`);
-      await autoEnrichDiscoveredCandidates(enrichBatch, stats);
+      const elapsedBeforeEnrich = Date.now() - startTime;
+      const availableMs = Math.max(0, AUTO_CONTACT_ENRICH_TIME_BUDGET_MS - elapsedBeforeEnrich);
+
+      if (availableMs > AUTO_CONTACT_ENRICH_MIN_REMAINING_MS) {
+        console.log(
+          `[runRadarTask] Auto-enriching up to ${autoEnrichQueue.length} candidates ` +
+          `(${Math.round(availableMs / 1000)}s budget, ${Math.round(elapsedBeforeEnrich / 1000)}s already spent)`
+        );
+        const enrichedCount = await autoEnrichDiscoveredCandidates(
+          autoEnrichQueue, stats, availableMs
+        );
+        console.log(
+          `[runRadarTask] Auto-enriched ${enrichedCount}/${autoEnrichQueue.length} candidates ` +
+          `(${autoEnrichQueue.length - enrichedCount} left for frontend batch)`
+        );
+      } else {
+        console.log(
+          `[runRadarTask] Skipping in-task enrichment — only ${Math.round(availableMs / 1000)}s remaining`
+        );
+      }
     }
 
     stats.duration = Date.now() - startTime;
@@ -410,11 +428,29 @@ async function processCandidate(
   };
 }
 
+/**
+ * 自动补全一批候选企业
+ * @returns 实际补全数量（受时间预算限制）
+ */
 async function autoEnrichDiscoveredCandidates(
   candidateIds: string[],
-  stats: { created: number; duplicates: number; errors: string[] }
-) {
+  stats: { created: number; duplicates: number; errors: string[] },
+  timeBudgetMs: number = AUTO_CONTACT_ENRICH_TIME_BUDGET_MS
+): Promise<number> {
+  const enrichStart = Date.now();
+  let enrichedCount = 0;
+
   for (let index = 0; index < candidateIds.length; index += AUTO_CONTACT_ENRICH_CONCURRENCY) {
+    // 时间预算检查：剩余时间不足启动下一批则退出
+    const elapsed = Date.now() - enrichStart;
+    if (elapsed > timeBudgetMs - 5_000) {
+      console.log(
+        `[autoEnrich] Time budget nearly exhausted (${Math.round(elapsed / 1000)}s / ${Math.round(timeBudgetMs / 1000)}s), ` +
+        `stopping after ${index} candidates`
+      );
+      break;
+    }
+
     const batch = candidateIds.slice(index, index + AUTO_CONTACT_ENRICH_CONCURRENCY);
 
     await Promise.allSettled(
@@ -431,7 +467,9 @@ async function autoEnrichDiscoveredCandidates(
             includeContacts: true,
           });
 
-          if (!result.success && result.errors.length > 0) {
+          if (result.success) {
+            enrichedCount++;
+          } else if (result.errors.length > 0) {
             stats.errors.push(
               `[Auto enrich] ${candidateId}: ${result.errors.join('; ')}`
             );
@@ -455,6 +493,8 @@ async function autoEnrichDiscoveredCandidates(
       })
     );
   }
+
+  return enrichedCount;
 }
 
 // ==================== 取消任务 ====================

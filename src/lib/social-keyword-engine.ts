@@ -107,7 +107,7 @@ export async function extractCoreKeywords(
 
     // 3. 调用 AI 模型
     const response = await aiClient.chat.completions.create({
-      model: process.env.AI_MODEL || "qwen-plus",
+      model: undefined,
       messages: [
         { role: "system", content: KEYWORD_EXTRACTION_SYSTEM_PROMPT },
         { role: "user", content: prompt },
@@ -186,7 +186,7 @@ export async function expandLongTailKeywords(
       });
 
       const response = await aiClient.chat.completions.create({
-        model: process.env.AI_MODEL || "qwen-plus",
+        model: undefined,
         messages: [
           { role: "system", content: LONG_TAIL_EXPANSION_SYSTEM_PROMPT },
           { role: "user", content: expansionPrompt },

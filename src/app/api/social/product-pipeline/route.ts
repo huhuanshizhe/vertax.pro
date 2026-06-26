@@ -61,7 +61,7 @@ export async function GET() {
     const session = await auth();
     if (!session?.user?.tenantId) return NextResponse.json({ success: true, data: null });
     const saved = await prisma.socialKeywordSet.findUnique({ where: { tenantId: session.user.tenantId } });
-    return NextResponse.json({ success: true, data: saved?.config?.pipeline || null });
+    return NextResponse.json({ success: true, data: (saved?.config as Record<string, unknown> | null)?.pipeline || null });
   } catch {
     return NextResponse.json({ success: true, data: null });
   }
@@ -248,7 +248,7 @@ ${Object.entries(PLATFORM_STYLES).filter(([k]) => platforms.includes(k)).map(([k
     }
   }
 
-  const data: PipelineData = { productName, topics: selectedTopics, contents };
+  const data: PipelineData = { productName, topics: selectedTopics, contents: contents as PipelineData['contents'] };
   await savePipeline(tenantId, data);
 
   const contentCount = Object.keys(contents).length;

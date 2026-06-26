@@ -76,9 +76,9 @@ const CHUNK_SUMMARY_PROMPT = `为这段文档片段生成简洁的摘要（50字
  * 生成文档摘要
  */
 async function generateDocumentSummary(text: string): Promise<DocumentSummary | null> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const apiKey = process.env.TEXT_API_KEY;
   if (!apiKey) {
-    throw new Error("DASHSCOPE_API_KEY not configured");
+    throw new Error("TEXT_API_KEY not configured");
   }
 
   // 限制输入长度
@@ -88,7 +88,7 @@ async function generateDocumentSummary(text: string): Promise<DocumentSummary | 
 
   try {
     const response = await fetch(
-      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
       {
         method: "POST",
         headers: {
@@ -146,7 +146,7 @@ async function generateDocumentSummary(text: string): Promise<DocumentSummary | 
  * 为文档分块生成摘要
  */
 async function _generateChunkSummary(chunkText: string): Promise<string> {
-  const apiKey = process.env.DASHSCOPE_API_KEY;
+  const apiKey = process.env.TEXT_API_KEY;
   if (!apiKey) return "";
 
   // 只处理有意义的文本
@@ -157,7 +157,7 @@ async function _generateChunkSummary(chunkText: string): Promise<string> {
 
   try {
     const response = await fetch(
-      "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "https://coding.dashscope.aliyuncs.com/v1/chat/completions",
       {
         method: "POST",
         headers: {
