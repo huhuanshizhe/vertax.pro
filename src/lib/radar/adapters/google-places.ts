@@ -47,7 +47,7 @@ interface PlaceResultNew {
 }
 
 interface SearchTextRequest {
-  textQuery: string;
+  textQuery?: string;
   languageCode?: string;
   regionCode?: string;
   locationBias?: {
@@ -228,27 +228,31 @@ export class GooglePlacesAdapter implements RadarAdapter {
     
     // 一直翻页直到 Google 没有更多数据或达到安全上限
     for (let page = 0; page < maxPages; page++) {
-      const body: SearchTextRequest = {
-        textQuery: searchText,
-        languageCode: 'en',
-        pageSize: perPage,
-      };
-      
-      if (query.locationBias) {
-        body.locationBias = {
-          circle: {
-            center: { latitude: query.locationBias.lat, longitude: query.locationBias.lng },
-            radius: query.locationBias.radius * 1000,
-          },
-        };
-      }
-      
-      if (query.countries?.length === 1) {
-        body.regionCode = query.countries[0].toUpperCase();
-      }
+      let body: SearchTextRequest;
       
       if (pageToken) {
-        body.pageToken = pageToken;
+        // ⚠️ Google Places API 规定：传 pageToken 时不能再传其他查询参数
+        // 否则 API 会忽略 pageToken，重新执行原始查询 → 永远返回第一页！
+        body = { pageToken };
+      } else {
+        body = {
+          textQuery: searchText,
+          languageCode: 'en',
+          pageSize: perPage,
+        };
+        
+        if (query.locationBias) {
+          body.locationBias = {
+            circle: {
+              center: { latitude: query.locationBias.lat, longitude: query.locationBias.lng },
+              radius: query.locationBias.radius * 1000,
+            },
+          };
+        }
+        
+        if (query.countries?.length === 1) {
+          body.regionCode = query.countries[0].toUpperCase();
+        }
       }
     
       const response = await fetch(

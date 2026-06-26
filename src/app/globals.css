@@ -956,3 +956,10 @@
   height: 3px;
   background: linear-gradient(90deg, rgba(79, 141, 246, 0.82), rgba(79, 141, 246, 0.08));
 }
+
+/* Loading bar animation for route transitions */
+@keyframes loading-bar {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(100%); }
+  100% { transform: translateX(300%); }
+}

@@ -1,19 +1,20 @@
-import { Loader2, Radar } from "lucide-react";
-
 export default function RadarLoading() {
   return (
-    <div className="min-h-screen bg-[var(--ci-bg)] px-6">
-      <div className="mx-auto flex min-h-screen max-w-[1680px] items-center justify-center">
-        <div className="text-center">
-          <div className="relative inline-flex items-center justify-center mb-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-xl bg-[#F7F3EA] shadow-[0_16px_32px_-24px_rgba(11,27,43,0.45)]">
-              <Radar className="h-8 w-8 text-[var(--ci-accent)]" />
-            </div>
-            <div className="absolute -bottom-1 -right-1">
-              <Loader2 className="h-5 w-5 animate-spin text-[var(--ci-accent)]" />
-            </div>
+    <div className="flex flex-col gap-4">
+      {/* Slim top loading bar that preserves nav visibility */}
+      <div className="h-0.5 w-full overflow-hidden rounded-full bg-[var(--ci-border)]">
+        <div className="h-full w-1/3 animate-[loading-bar_1.2s_ease-in-out_infinite] rounded-full bg-[var(--ci-accent)]" />
+      </div>
+      {/* Content skeleton */}
+      <div className="rounded-xl border border-[var(--ci-border)] bg-white p-6">
+        <div className="animate-pulse space-y-4">
+          <div className="h-4 w-1/4 rounded bg-slate-100" />
+          <div className="h-3 w-2/3 rounded bg-slate-100" />
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[1, 2, 3, 4].map((i) => (
+              <div key={i} className="h-20 rounded-xl bg-slate-100" />
+            ))}
           </div>
-          <p className="text-sm text-slate-500">雷达模块正在加载...</p>
         </div>
       </div>
     </div>

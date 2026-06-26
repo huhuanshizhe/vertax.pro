@@ -588,23 +588,39 @@ export async function getCandidatesV2(options?: {
   if (options?.hasWebsite) {
     where.website = { not: null };
   }
+
+  // 组合 AND 条件（country + search 可并存）
+  const andConditions: Record<string, unknown>[] = [];
+
   if (options?.country) {
-    where.OR = [
-      { country: options.country },
-      { buyerCountry: options.country },
-    ];
+    // 用所有可能的拼写变体匹配（e.g. 选 "United States" → 匹配 DB 中的 "USA", "US", "United States"）
+    const { getCountryMatchValues } = await import('@/lib/radar/country-utils');
+    const matchValues = getCountryMatchValues(options.country);
+    if (matchValues && matchValues.length > 0) {
+      andConditions.push({
+        OR: [
+          { country: { in: matchValues } },
+          { buyerCountry: { in: matchValues } },
+        ],
+      });
+    }
   }
   if (options?.search) {
-    where.OR = [
-      { displayName: { contains: options.search, mode: 'insensitive' } },
-      { buyerName: { contains: options.search, mode: 'insensitive' } },
-      { description: { contains: options.search, mode: 'insensitive' } },
-      { website: { contains: options.search, mode: 'insensitive' } },
-      { industry: { contains: options.search, mode: 'insensitive' } },
-      { country: { contains: options.search, mode: 'insensitive' } },
-      { buyerCountry: { contains: options.search, mode: 'insensitive' } },
-      { source: { name: { contains: options.search, mode: 'insensitive' } } },
-    ];
+    andConditions.push({
+      OR: [
+        { displayName: { contains: options.search, mode: 'insensitive' } },
+        { buyerName: { contains: options.search, mode: 'insensitive' } },
+        { description: { contains: options.search, mode: 'insensitive' } },
+        { website: { contains: options.search, mode: 'insensitive' } },
+        { industry: { contains: options.search, mode: 'insensitive' } },
+        { country: { contains: options.search, mode: 'insensitive' } },
+        { buyerCountry: { contains: options.search, mode: 'insensitive' } },
+        { source: { name: { contains: options.search, mode: 'insensitive' } } },
+      ],
+    });
+  }
+  if (andConditions.length > 0) {
+    where.AND = andConditions;
   }
   
   const [candidates, total] = await Promise.all([
@@ -622,9 +638,40 @@ export async function getCandidatesV2(options?: {
 }
 
 /**
- * 閼惧嘲褰囬崐娆撯偓澶庮嚊閹?
+ * Get distinct countries for the current tenant's candidates (filter dropdown)
+ * Only returns values that map to valid ISO country codes
  */
-export async function getCandidateV2(candidateId: string) {
+export async function getCandidateCountries(): Promise<string[]> {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
+
+  const { normalizeCountryCode, getCountryDisplayName } = await import('@/lib/radar/country-utils');
+
+  const rows = await prisma.radarCandidate.findMany({
+    where: { tenantId: session.user.tenantId, country: { not: null } },
+    select: { country: true },
+    distinct: ['country'],
+    orderBy: { country: 'asc' },
+  });
+
+  // 只保留能映射到合法 ISO 码的国家，按 ISO 码去重
+  const seenCodes = new Set<string>();
+  const result: string[] = [];
+
+  for (const row of rows) {
+    if (!row.country) continue;
+    const isoCode = normalizeCountryCode(row.country);
+    if (!isoCode || seenCodes.has(isoCode)) continue;
+    seenCodes.add(isoCode);
+    const displayName = getCountryDisplayName(isoCode);
+    if (displayName) result.push(displayName);
+  }
+
+  return result.sort();
+}
+
+/**
+ * getCandidateV2
   const session = await auth();
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
   

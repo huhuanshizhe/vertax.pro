@@ -10,7 +10,7 @@
  * - Right: 详情面板（来源、理由、建议操作）
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { 
@@ -39,6 +39,7 @@ import {
   Linkedin,
   MessageSquare,
   Trash2,
+  Globe,
 } from 'lucide-react';
 import {
   getCandidatesV2,
@@ -48,6 +49,7 @@ import {
   importCandidateToCompanyV2,
   importCandidateToOpportunityV2,
   getRadarStatsV2,
+  getCandidateCountries,
   type RadarStatsData,
 } from '@/actions/radar-v2';
 import {
@@ -253,13 +255,26 @@ export default function RadarCandidatesPage() {
   const [filters, setFilters] = useState({
     status: (initialStatus || '') as CandidateStatus | '',
     qualifyTier: initialTier || '',
+    country: '',
     search: '',
   });
 
+  // 可用国家列表
+  const [availableCountries, setAvailableCountries] = useState<string[]>([]);
+  useEffect(() => {
+    getCandidateCountries()
+      .then(setAvailableCountries)
+      .catch(() => setAvailableCountries([]));
+  }, []);
+
+  // 追踪是否已完成首次加载，后续筛选切换时不闪白
+  const initialLoadDone = useRef(false);
+
   // 加载数据
   const loadData = useCallback(async (showRefreshing = false) => {
+    const isFirstLoad = !initialLoadDone.current;
     if (showRefreshing) setIsRefreshing(true);
-    else setIsLoading(true);
+    else if (isFirstLoad) setIsLoading(true);
     
     setError(null);
     try {
@@ -268,6 +283,7 @@ export default function RadarCandidatesPage() {
           candidateType: 'COMPANY',
           status: filters.status || undefined,
           qualifyTier: filters.qualifyTier || undefined,
+          country: filters.country || undefined,
           search: filters.search || undefined,
           limit: 100,
         }),
@@ -283,6 +299,7 @@ export default function RadarCandidatesPage() {
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
+      initialLoadDone.current = true;
     }
   }, [filters]);
 
@@ -741,7 +758,7 @@ export default function RadarCandidatesPage() {
     return map[status] || { label: status, color: 'bg-slate-50 text-slate-600' };
   };
 
-  if (isLoading) {
+  if (isLoading && candidates.length === 0) {
     return (
       <div className="flex items-center justify-center min-h-[400px]">
         <Loader2 className="w-8 h-8 text-[var(--ci-accent)] animate-spin" />
@@ -825,6 +842,22 @@ export default function RadarCandidatesPage() {
               </option>
             ))}
           </select>
+
+          {availableCountries.length > 0 && (
+            <div className="relative">
+              <Globe className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" size={11} />
+              <select
+                value={filters.country}
+                onChange={(e) => setFilters(prev => ({ ...prev, country: e.target.value }))}
+                className="rounded-md border border-[var(--ci-border)] bg-[var(--ci-surface-strong)] py-1 pl-6 pr-2 text-xs text-slate-600 focus:outline-none focus:ring-1 focus:ring-[var(--ci-accent)]/30 appearance-none"
+              >
+                <option value="">全部国家</option>
+                {availableCountries.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="relative">
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
@@ -995,7 +1028,7 @@ export default function RadarCandidatesPage() {
                       当前筛选条件下没有匹配结果，请尝试调整筛选条件
                     </p>
                     <button 
-                      onClick={() => setFilters({ status: '', qualifyTier: '', search: '' })}
+                      onClick={() => setFilters({ status: '', qualifyTier: '', country: '', search: '' })}
                       className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors"
                     >
                       清除筛选
