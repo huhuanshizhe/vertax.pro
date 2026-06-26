@@ -33,6 +33,7 @@ import {
   getRadarStatsV2,
   initializeSystemSourcesV2,
   runSingleCountrySearch,
+  autoEnrichAndImportCandidates,
   getSearchComboMatrix,
   cleanupStuckTasks,
   toggleRadarSearchProfileActive,
@@ -276,6 +277,30 @@ export default function RadarSearchPage() {
         toast.success(`${combo.keyword} × ${combo.country} 完成`, {
           description: `抓取 ${result.fetched} 条，新增 ${result.created} 家，去重 ${result.duplicates} 家。`,
         });
+
+        // 自动触发联系人补全 + 入库
+        if (result.candidateIds.length > 0) {
+          const enrichToastId = toast.loading(
+            `正在自动补全 ${result.candidateIds.length} 家企业的联系方式…`
+          );
+          try {
+            const enrichStats = await autoEnrichAndImportCandidates(result.candidateIds);
+            toast.dismiss(enrichToastId);
+            if (enrichStats.imported > 0) {
+              toast.success(
+                `自动补全完成：${enrichStats.enriched} 家已补全，${enrichStats.imported} 家已自动移入线索库`
+              );
+            } else if (enrichStats.enriched > 0) {
+              toast.success(`已为 ${enrichStats.enriched} 家企业补全联系方式`);
+            }
+            if (enrichStats.errors.length > 0) {
+              console.warn('[autoEnrich] Errors:', enrichStats.errors);
+            }
+          } catch {
+            toast.dismiss(enrichToastId);
+            toast.warning('自动补全部分完成，可稍后手动刷新');
+          }
+        }
       }
 
       // 刷新矩阵

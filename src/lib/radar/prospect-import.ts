@@ -13,7 +13,7 @@ interface CandidateWithSource extends RadarCandidate {
   source: RadarSource;
 }
 
-function normalizeDomainForDedup(website: string | null | undefined): string | null {
+export function normalizeDomainForDedup(website: string | null | undefined): string | null {
   if (!website) return null;
 
   try {

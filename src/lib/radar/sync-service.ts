@@ -11,7 +11,12 @@ import {
 import { enrichCandidateIntelligence } from './intelligence-enricher';
 import type { RadarTask, RadarSource } from '@prisma/client';
 
-// ==================== 类型定义 ====================
+const AUTO_CONTACT_ENRICH_MAX_CANDIDATES = 5;
+
+/**
+ * 限制自动补全数量以适配 Vercel Hobby 60s 限制
+ * 剩余候选由前端后续自动触发补全
+ */
 
 export interface SyncResult {
   success: boolean;
@@ -38,7 +43,7 @@ export interface TaskConfig {
   name?: string;
 }
 
-const AUTO_CONTACT_ENRICH_CHANNELS = new Set(['MAPS']);
+const AUTO_CONTACT_ENRICH_CHANNELS = new Set(['MAPS', 'SEARCH', 'DIRECTORY']);
 const AUTO_CONTACT_ENRICH_CONCURRENCY = 4;
 
 // ==================== 创建任务 ====================
@@ -207,12 +212,12 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
       if (page > 100) break;
     }
 
-    // 跳过自动联系人补全以适配 Vercel Hobby 60s 限制
-    // autoEnrich 对每个候选调用外部 API，40个候选远超时限
-    // TODO: 改为异步队列或定时任务处理
-    // if (autoEnrichQueue.length > 0) {
-    //   await autoEnrichDiscoveredCandidates(autoEnrichQueue, stats);
-    // }
+    // 自动联系人补全（限制数量以适配 Vercel Hobby 60s）
+    if (autoEnrichQueue.length > 0) {
+      const enrichBatch = autoEnrichQueue.slice(0, AUTO_CONTACT_ENRICH_MAX_CANDIDATES);
+      console.log(`[runRadarTask] Auto-enriching ${enrichBatch.length}/${autoEnrichQueue.length} candidates`);
+      await autoEnrichDiscoveredCandidates(enrichBatch, stats);
+    }
 
     stats.duration = Date.now() - startTime;
 

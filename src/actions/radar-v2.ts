@@ -2249,7 +2249,8 @@ export async function runSingleCountrySearch(input: {
   fetched: number;
   created: number;
   duplicates: number;
-  sources: Array<{ code: string; name: string; fetched: number; created: number; duplicates: number; error?: string }>;
+  candidateIds: string[];
+  sources: Array<{ code: string; name: string; taskId: string; fetched: number; created: number; duplicates: number; error?: string }>;
   error?: string;
 }> {
   const session = await auth();
@@ -2280,7 +2281,8 @@ export async function runSingleCountrySearch(input: {
         fetched: result.stats.fetched,
         created: result.stats.created,
         duplicates: result.stats.duplicates,
-        sources: [{ code: 'default', name: 'Default Source', ...result.stats }],
+        candidateIds: [],
+        sources: [{ code: 'default', name: 'Default Source', taskId: task.id, ...result.stats }],
       };
     }
 
@@ -2309,6 +2311,7 @@ export async function runSingleCountrySearch(input: {
         return {
           code: source.code,
           name: source.name,
+          taskId: task.id,
           fetched: result.stats.fetched,
           created: result.stats.created,
           duplicates: result.stats.duplicates,
@@ -2321,6 +2324,7 @@ export async function runSingleCountrySearch(input: {
     const sources: Array<{
       code: string;
       name: string;
+      taskId: string;
       fetched: number;
       created: number;
       duplicates: number;
@@ -2331,6 +2335,7 @@ export async function runSingleCountrySearch(input: {
     let totalCreated = 0;
     let totalDuplicates = 0;
     const allErrors: string[] = [];
+    const taskIds: string[] = [];
 
     for (const r of sourceResults) {
       if (r.status === 'fulfilled') {
@@ -2338,11 +2343,13 @@ export async function runSingleCountrySearch(input: {
         totalFetched += r.value.fetched;
         totalCreated += r.value.created;
         totalDuplicates += r.value.duplicates;
+        taskIds.push(r.value.taskId);
         if (r.value.error) allErrors.push(`[${r.value.code}] ${r.value.error}`);
       } else {
         sources.push({
           code: 'unknown',
           name: 'Failed Source',
+          taskId: '',
           fetched: 0,
           created: 0,
           duplicates: 0,
@@ -2352,12 +2359,27 @@ export async function runSingleCountrySearch(input: {
       }
     }
 
+    // 查询本次搜索创建的所有候选 ID
+    const newCandidates = taskIds.length > 0
+      ? await prisma.radarCandidate.findMany({
+          where: {
+            tenantId: session.user.tenantId,
+            taskId: { in: taskIds },
+            status: { not: 'IMPORTED' },
+          },
+          select: { id: true },
+          take: 200,
+        })
+      : [];
+    const candidateIds = newCandidates.map(c => c.id);
+
     return {
       keyword: input.keyword,
       country: input.country,
       fetched: totalFetched,
       created: totalCreated,
       duplicates: totalDuplicates,
+      candidateIds,
       sources,
       error: allErrors.length > 0 ? allErrors.join('; ') : undefined,
     };
@@ -2368,10 +2390,238 @@ export async function runSingleCountrySearch(input: {
       fetched: 0,
       created: 0,
       duplicates: 0,
+      candidateIds: [],
       sources: [],
       error: err instanceof Error ? err.message : 'Unknown error',
     };
   }
+}
+
+// ==================== 自动补全 + 自动入库 ====================
+
+const AUTO_ENRICH_CONCURRENCY = 3;
+const AUTO_IMPORT_EMAIL_MIN_CONFIDENCE = 70;
+
+/**
+ * 搜索完成后自动执行的管线：
+ *   1. 对候选企业执行联系人补全（Firecrawl + OSINT + 邮箱验证 + LinkedIn）
+ *   2. 有邮箱数据的企业自动移入线索库（ProspectCompany）
+ *
+ * 设计原则：
+ *   - 并发处理（3个一批）避免 Vercel 超时
+ *   - 每个候选独立容错，一个失败不影响其他
+ *   - 已在 runRadarTask 中补全过的候选自动跳过
+ */
+export async function autoEnrichAndImportCandidates(
+  candidateIds: string[]
+): Promise<{
+  enriched: number;
+  imported: number;
+  failed: number;
+  errors: string[];
+}> {
+  const session = await auth();
+  if (!session?.user?.tenantId || !session.user.id) throw new Error('Unauthorized');
+
+  const stats = { enriched: 0, imported: 0, failed: 0, errors: [] as string[] };
+
+  if (!candidateIds.length) return stats;
+
+  console.log(`[autoEnrich] Starting auto-enrich + import for ${candidateIds.length} candidates`);
+
+  for (let i = 0; i < candidateIds.length; i += AUTO_ENRICH_CONCURRENCY) {
+    const batch = candidateIds.slice(i, i + AUTO_ENRICH_CONCURRENCY);
+
+    const results = await Promise.allSettled(
+      batch.map(async (candidateId) => {
+        // 检查是否已被补全过
+        const candidate = await prisma.radarCandidate.findUnique({
+          where: { id: candidateId },
+          select: { id: true, status: true, email: true, enrichedAt: true, tenantId: true },
+        });
+
+        if (!candidate || candidate.tenantId !== session.user.tenantId) {
+          return { enriched: false, imported: false, reason: 'not found or wrong tenant' };
+        }
+
+        // 跳过已导入或已补全的
+        if (candidate.status === 'IMPORTED') {
+          return { enriched: false, imported: false, reason: 'already imported' };
+        }
+
+        // Step 1: 联系人补全
+        let enriched = false;
+        if (!candidate.enrichedAt) {
+          try {
+            const { enrichCandidateIntelligence } = await import(
+              '@/lib/radar/intelligence-enricher'
+            );
+            const enrichResult = await enrichCandidateIntelligence(candidateId, {
+              includeFunding: false,
+              includeNews: false,
+              includeContacts: true,
+              includeCompetitors: false,
+            });
+
+            if (enrichResult.success) {
+              enriched = true;
+            } else if (enrichResult.errors.length > 0) {
+              console.warn(`[autoEnrich] Enrich ${candidateId} partial:`, enrichResult.errors.join('; '));
+              enriched = true; // 部分成功也算成功
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[autoEnrich] Enrich ${candidateId} failed:`, msg);
+            return { enriched: false, imported: false, reason: msg };
+          }
+        } else {
+          enriched = true; // 之前已补全
+        }
+
+        // Step 2: 有邮箱 → 自动入库
+        let imported = false;
+        if (enriched) {
+          const updated = await prisma.radarCandidate.findUnique({
+            where: { id: candidateId },
+            select: { email: true, phone: true, status: true },
+          });
+
+          const hasEmail = updated?.email && updated.email.includes('@');
+          if (hasEmail && updated?.status !== 'IMPORTED') {
+            try {
+              await importCandidateToCompanyV2Internal(candidateId, session.user.id, session.user.tenantId);
+              imported = true;
+              console.log(`[autoEnrich] Auto-imported ${candidateId} to leads (email: ${updated?.email})`);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (!msg.includes('already imported')) {
+                console.error(`[autoEnrich] Import ${candidateId} failed:`, msg);
+              }
+            }
+          }
+        }
+
+        return { enriched, imported };
+      })
+    );
+
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        if (r.value.enriched) stats.enriched++;
+        if (r.value.imported) stats.imported++;
+        if (!r.value.enriched && !r.value.imported) stats.failed++;
+      } else {
+        stats.failed++;
+        stats.errors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+      }
+    }
+  }
+
+  console.log(
+    `[autoEnrich] Done: ${stats.enriched} enriched, ${stats.imported} imported, ${stats.failed} failed`
+  );
+
+  return stats;
+}
+
+/**
+ * 内部导入函数（无需再次 auth，由 autoEnrichAndImportCandidates 调用）
+ */
+async function importCandidateToCompanyV2Internal(
+  candidateId: string,
+  userId: string,
+  tenantId: string
+): Promise<void> {
+  const candidate = await prisma.radarCandidate.findUnique({
+    where: { id: candidateId },
+    include: { source: true },
+  });
+
+  if (!candidate || candidate.status === 'IMPORTED') return;
+
+  const companyName = candidate.buyerName || candidate.displayName;
+  const companyCountry = candidate.buyerCountry || candidate.country;
+  const { normalizeDomainForDedup } = await import('@/lib/radar/prospect-import');
+  const { getCandidateContactEnrichment } = await import('@/lib/radar/contact-enrichment');
+  const { buildProspectOutreachStateValue } = await import('@/lib/radar/prospect-outreach-state');
+
+  // 去重检查
+  let existingCompany: { id: string } | null = null;
+  if (candidate.website) {
+    const domain = normalizeDomainForDedup(candidate.website);
+    if (domain) {
+      existingCompany = await prisma.prospectCompany.findFirst({
+        where: { tenantId, website: { contains: domain, mode: 'insensitive' }, deletedAt: null },
+        select: { id: true },
+      });
+    }
+  }
+
+  if (existingCompany) {
+    // 已存在则只标记导入
+    await prisma.radarCandidate.update({
+      where: { id: candidateId },
+      data: {
+        status: 'IMPORTED',
+        importedToType: 'ProspectCompany',
+        importedToId: existingCompany.id,
+        importedAt: new Date(),
+        importedBy: userId,
+      },
+    });
+    return;
+  }
+
+  const matchReasons = (candidate.matchExplain as Record<string, unknown>)?.reasons || [];
+  const candidateContactSnapshot = getCandidateContactEnrichment(candidate);
+
+  const company = await prisma.prospectCompany.create({
+    data: {
+      tenantId,
+      name: companyName,
+      website: candidate.website,
+      phone: candidate.phone,
+      email: candidate.email,
+      address: candidate.address,
+      country: companyCountry,
+      city: candidate.city,
+      industry: candidate.industry,
+      companySize: candidate.companySize,
+      description: candidate.description,
+      tier: candidate.qualifyTier,
+      matchReasons: Array.isArray(matchReasons) ? (matchReasons as unknown as Prisma.InputJsonValue) : undefined,
+      sourceType: candidate.source.channelType.toLowerCase(),
+      sourceCandidateId: candidateId,
+      sourceUrl: candidate.sourceUrl,
+      status: 'new',
+      outreachArtifacts: candidateContactSnapshot
+        ? buildProspectOutreachStateValue(null, { contactSnapshot: candidateContactSnapshot })
+        : undefined,
+    },
+  });
+
+  await prisma.radarCandidate.update({
+    where: { id: candidateId },
+    data: {
+      status: 'IMPORTED',
+      importedToType: 'ProspectCompany',
+      importedToId: company.id,
+      importedAt: new Date(),
+      importedBy: userId,
+    },
+  });
+
+  await prisma.activity.create({
+    data: {
+      tenantId,
+      userId,
+      action: 'radar_candidate_auto_imported',
+      entityType: 'ProspectCompany',
+      entityId: company.id,
+      eventCategory: 'radar',
+      context: { candidateId, companyName: company.name, autoEnrich: true } as object,
+    },
+  });
 }
 
 // ==================== 搜索组合进度矩阵 ====================
