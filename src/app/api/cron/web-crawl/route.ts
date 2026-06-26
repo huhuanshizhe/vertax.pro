@@ -1,4 +1,4 @@
-﻿import { NextRequest, NextResponse } from "next/server";
+﻿import { NextRequest, NextResponse, after } from "next/server";
 import { ensureCronAuthorized } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import { extractLinksFromHtml, matchesLanguagePrefix, normalizeUrl } from "@/lib/services/site-crawler";
@@ -113,7 +113,11 @@ export async function GET(req: NextRequest) {
 
     // ===== 鑷Е鍙戦摼锛氬鏋滆繕鏈夊緟澶勭悊 URL锛宖ire-and-forget 璋冪敤鑷繁缁х画澶勭悊 =====
     if (hasMoreWork && !isFromCron) {
-      selfTriggerCrawl(req).catch(() => {});
+      after(async () => {
+        await selfTriggerCrawl(req).catch((err) => {
+          console.warn("[web-crawl] Self-trigger failed:", err);
+        });
+      });
     }
 
     return NextResponse.json({
