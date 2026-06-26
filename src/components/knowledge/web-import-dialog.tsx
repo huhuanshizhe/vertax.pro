@@ -13,6 +13,8 @@ interface PollStatus {
   totalPages: number;
   processedPages: number;
   progress: number;
+  discoveryMethod?: string | null;
+  languagePrefix?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -32,6 +34,8 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
   const [error, setError] = useState("");
   const [isPolling, setIsPolling] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [languagePrefix, setLanguagePrefix] = useState<string | null>(null);
+  const [discoveryMethod, setDiscoveryMethod] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const reset = useCallback(() => {
@@ -124,6 +128,8 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
 
       // Task queued successfully
       setTaskId(data.taskId);
+      setLanguagePrefix(data.languagePrefix ?? null);
+      setDiscoveryMethod(data.method ?? null);
       setStatus({
         id: data.taskId,
         batchId: data.batchId,
@@ -286,7 +292,9 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
                         : "后台采集中..."}
                     </h3>
                     <p className="text-sm" style={{ color: "rgba(255,255,255,0.5)" }}>
-                      {status.totalPages} pages total
+                      {discoveryMethod === "incremental-crawl"
+                        ? `增量采集中 · 已发现 ${status.totalPages} 页`
+                        : `${status.totalPages} pages total`}
                     </p>
                   </div>
                 </div>

@@ -292,7 +292,69 @@ async function crawlLinks(
 }
 
 /**
- * 提取页面中的所有站内链接
+ * 从 HTML 字符串中提取所有站内链接（供 cron 增量发现复用）
+ */
+export function extractLinksFromHtml(
+  html: string,
+  baseUrl: string,
+  rootHostname: string,
+  opts: Partial<CrawlOptions> = {}
+): string[] {
+  const mergedOpts = { ...DEFAULT_OPTIONS, ...opts };
+  const $ = cheerio.load(html);
+  const links: string[] = [];
+
+  $("a[href]").each((_, el) => {
+    const href = $(el).attr("href");
+    if (!href) return;
+
+    try {
+      const resolved = new URL(href, baseUrl).href;
+      const parsedLink = new URL(resolved);
+
+      // 仅保留同域名链接
+      if (parsedLink.hostname === rootHostname) {
+        const normalized = normalizeUrl(resolved);
+        if (shouldIncludeUrl(normalized, rootHostname, mergedOpts)) {
+          links.push(normalized);
+        }
+      }
+    } catch {
+      // 无效 URL，跳过
+    }
+  });
+
+  return [...new Set(links)];
+}
+
+/**
+ * 从路径中检测语言前缀
+ * 支持: /en/xxx, /zh/xxx, /zh-CN/xxx, /fr/xxx 等
+ */
+export function detectLanguagePrefix(pathname: string): string | null {
+  const match = pathname.match(/^\/([a-z]{2}(-[A-Z]{2})?)\//);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * 检查 URL 是否匹配指定语言前缀
+ */
+export function matchesLanguagePrefix(url: string, langPrefix: string | null): boolean {
+  if (!langPrefix) return true; // 无语言前缀，全部通过
+  try {
+    const parsed = new URL(url);
+    // 根路径始终通过
+    if (parsed.pathname === "/" || parsed.pathname === "") return true;
+    // 匹配语言前缀路径
+    return parsed.pathname.startsWith(`/${langPrefix}/`) ||
+           parsed.pathname === `/${langPrefix}`;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 提取页面中的所有站内链接（BFS 爬取用，会发起 HTTP 请求）
  */
 async function extractPageLinks(
   url: string,
@@ -320,27 +382,7 @@ async function extractPageLinks(
     if (!contentType.includes("text/html")) return [];
 
     const html = await res.text();
-    const $ = cheerio.load(html);
-    const links: string[] = [];
-
-    $("a[href]").each((_, el) => {
-      const href = $(el).attr("href");
-      if (!href) return;
-
-      try {
-        const resolved = new URL(href, url).href;
-        const parsedLink = new URL(resolved);
-
-        // 仅保留同域名链接
-        if (parsedLink.hostname === rootHostname) {
-          links.push(resolved);
-        }
-      } catch {
-        // 无效 URL，跳过
-      }
-    });
-
-    return links;
+    return extractLinksFromHtml(html, url, rootHostname, opts);
   } catch {
     return [];
   }

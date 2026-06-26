@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { ensureCronAuthorized } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
+import { extractLinksFromHtml, matchesLanguagePrefix, normalizeUrl } from "@/lib/services/site-crawler";
 import { fetchWebContent } from "@/lib/services/web-scraper";
 import { splitTextIntoChunks } from "@/lib/utils/chunk-utils";
 
@@ -31,7 +32,17 @@ type CrawlQueueUrlItem = {
   processedAt?: string;
 };
 
-type CrawlQueueMetadata = Record<string, unknown>;
+type CrawlQueueMetadata = {
+  discoveryMethod?: string;
+  languagePrefix?: string | null;
+  requestedAt?: string;
+  maxPagesRequested?: number;
+  lastProcessedAt?: string;
+  lastStats?: { processed: number; failed: number; skipped: number };
+  completedAt?: string;
+  lastError?: string;
+  failedAt?: string;
+};
 
 /**
  * Web Crawl Background Worker
@@ -262,6 +273,49 @@ async function processCrawlTask(task: {
       item.processedAt = new Date().toISOString();
       processed++;
 
+      // ===== 增量发现：从本页提取新链接追加入队 =====
+      const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
+      const langPrefix = taskMetadata.languagePrefix ?? null;
+      const maxPages = (taskMetadata.maxPagesRequested as number) || 500;
+
+      if (isIncremental) {
+        try {
+          const rootHostname = new URL(task.rootUrl).hostname;
+          const newLinks = extractLinksFromHtml(scraped.html, pageUrl, rootHostname);
+
+          // 过滤语言前缀 + 去重已有 URL
+          const knownUrls = new Set(urlsArray.map(u => normalizeUrl(u.url)));
+          const addedUrls: string[] = [];
+
+          for (const link of newLinks) {
+            if (addedUrls.length >= 20) break; // 每次最多追加 20 条，避免单批膨胀过大
+            if (urlsArray.length + addedUrls.length >= maxPages) break;
+
+            const normalized = normalizeUrl(link);
+            if (knownUrls.has(normalized)) continue;
+            if (!matchesLanguagePrefix(normalized, langPrefix)) continue;
+
+            knownUrls.add(normalized);
+            addedUrls.push(normalized);
+          }
+
+          if (addedUrls.length > 0) {
+            const currentMaxPriority = urlsArray.reduce((max, u) => Math.max(max, u.priority), 0);
+            for (const newUrl of addedUrls) {
+              urlsArray.push({
+                url: newUrl,
+                status: "pending",
+                priority: currentMaxPriority + 1, // 新发现页面优先级低于已有页面
+              });
+            }
+            console.log(`[web-crawl] Incremental: added ${addedUrls.length} new URLs (total: ${urlsArray.length})`);
+          }
+        } catch (err) {
+          // 增量发现失败不影响当前页面处理
+          console.warn(`[web-crawl] Link extraction failed for ${pageUrl}:`, err);
+        }
+      }
+
       // Rate limiting: 200ms between pages
       await new Promise((r) => setTimeout(r, 200));
     } catch (err) {
@@ -275,18 +329,26 @@ async function processCrawlTask(task: {
 
   // Update task progress
   const newProcessedCount = task.processedPages + processed + failed + skipped;
-  const isComplete = newProcessedCount >= task.totalPages;
+  const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
+
+  // 增量模式：所有 URL 已处理完（无 pending）且本批未发现新链接时才算完成
+  const stillPending = urlsArray.filter(u => u.status === "pending").length;
+  const isComplete = isIncremental
+    ? (stillPending === 0)
+    : (newProcessedCount >= task.totalPages);
 
   await db.crawlQueue.update({
     where: { id: taskId },
     data: {
       urls: urlsArray,
+      totalPages: urlsArray.length, // 增量模式下实时反映实际页面数
       processedPages: newProcessedCount,
       status: isComplete ? "completed" : "processing",
       metadata: {
         ...taskMetadata,
         lastProcessedAt: new Date().toISOString(),
         lastStats: { processed, failed, skipped },
+        ...(isComplete ? { completedAt: new Date().toISOString() } : {}),
       },
     },
   });
