@@ -188,12 +188,12 @@ export async function POST(req: NextRequest) {
  * 触发后台爬取处理（fire-and-forget）
  */
 function triggerCrawlProcessing(req: NextRequest, taskId: string) {
-  const requestOrigin = req.headers.get("origin") ||
-    req.headers.get("host") ||
-    process.env.NEXT_PUBLIC_BASE_DOMAIN ||
+  const host = req.headers.get("host") ||
+    process.env.VERCEL_URL ||
+    process.env.NEXT_PUBLIC_APP_URL ||
     "localhost:3000";
-  const protocol = requestOrigin.startsWith("http") ? "" : "https://";
-  const cronUrl = `${protocol}${requestOrigin}/api/cron/web-crawl`;
+  const proto = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
+  const cronUrl = `${proto}://${host}/api/cron/web-crawl`;
 
   fetch(cronUrl, {
     method: "GET",

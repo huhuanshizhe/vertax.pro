@@ -57,6 +57,8 @@ export async function GET(req: NextRequest) {
     return unauthorizedResponse;
   }
 
+  const isFromCron = req.headers.get("x-vercel-cron") === "true";
+
   try {
     // Find pending/processing tasks
     const tasks = await db.crawlQueue.findMany({
@@ -77,6 +79,7 @@ export async function GET(req: NextRequest) {
     }
 
     let totalProcessed = 0;
+    let hasMoreWork = false;
     const results: Array<{ taskId: string; processed: number; error?: string }> = [];
 
     for (const task of tasks) {
@@ -84,6 +87,7 @@ export async function GET(req: NextRequest) {
         const result = await processCrawlTask(task);
         results.push(result);
         totalProcessed += result.processed;
+        if (result.hasMoreWork) hasMoreWork = true;
       } catch (err) {
         console.error(`[web-crawl] Task ${task.id} error:`, err);
         results.push({
@@ -107,10 +111,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ===== 鑷Е鍙戦摼锛氬鏋滆繕鏈夊緟澶勭悊 URL锛宖ire-and-forget 璋冪敤鑷繁缁х画澶勭悊 =====
+    if (hasMoreWork && !isFromCron) {
+      selfTriggerCrawl(req).catch(() => {});
+    }
+
     return NextResponse.json({
-      message: `Processed ${totalProcessed} pages across ${tasks.length} tasks`,
+      message: `Processed ${totalProcessed} pages across ${tasks.length} tasks${hasMoreWork ? " (more pending)" : ""}`,
       tasks: results,
       totalProcessed,
+      hasMoreWork,
     });
   } catch (err) {
     console.error("[web-crawl] Critical error:", err);
@@ -118,6 +128,23 @@ export async function GET(req: NextRequest) {
       error: err instanceof Error ? err.message : "Critical error" 
     }, { status: 500 });
   }
+}
+
+/**
+ * 鑷Е鍙戦摼锛歸ire-and-forget 璋冪敤鑷繁缁х画澶勭悊涓嬩竴鎵
+ */
+function selfTriggerCrawl(req: NextRequest) {
+  const host = req.headers.get("host") || process.env.VERCEL_URL || "";
+  const proto = host.startsWith("localhost") ? "http" : "https";
+  const cronUrl = `${proto}://${host}/api/cron/web-crawl`;
+
+  return fetch(cronUrl, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${process.env.CRON_SECRET || "dev-secret"}`,
+      "User-Agent": "vercel-cron-self-trigger",
+    },
+  });
 }
 
 /**
@@ -171,7 +198,7 @@ async function processCrawlTask(task: {
       },
     });
 
-    return { taskId, processed: 0, message: "Task completed" };
+    return { taskId, processed: 0, hasMoreWork: false, message: "Task completed" };
   }
 
   let processed = 0;
@@ -378,6 +405,6 @@ async function processCrawlTask(task: {
     },
   });
 
-  return { taskId, processed, failed, skipped };
+  return { taskId, processed, failed, skipped, hasMoreWork: !isComplete };
 }
 
