@@ -2399,7 +2399,7 @@ export async function runSingleCountrySearch(input: {
 
 // ==================== 自动补全 + 自动入库 ====================
 
-const AUTO_ENRICH_CONCURRENCY = 3;
+const AUTO_ENRICH_CONCURRENCY = 4;
 const AUTO_IMPORT_EMAIL_MIN_CONFIDENCE = 70;
 
 /**
@@ -2408,9 +2408,10 @@ const AUTO_IMPORT_EMAIL_MIN_CONFIDENCE = 70;
  *   2. 有邮箱数据的企业自动移入线索库（ProspectCompany）
  *
  * 设计原则：
- *   - 并发处理（3个一批）避免 Vercel 超时
+ *   - 全量并发处理（4个一批，与前端 BATCH_SIZE=4 对齐，~45s 内完成）
  *   - 每个候选独立容错，一个失败不影响其他
  *   - 已在 runRadarTask 中补全过的候选自动跳过
+ *   - 不仅检查顶层 email，也检查 rawData.contactEnrichment 中的邮箱（OSINT writeback 可能被阻断）
  */
 export async function autoEnrichAndImportCandidates(
   candidateIds: string[]
@@ -2483,15 +2484,35 @@ export async function autoEnrichAndImportCandidates(
         if (enriched) {
           const updated = await prisma.radarCandidate.findUnique({
             where: { id: candidateId },
-            select: { email: true, phone: true, status: true },
+            select: { email: true, phone: true, status: true, rawData: true },
           });
 
-          const hasEmail = updated?.email && updated.email.includes('@');
+          // 顶层 email 检查
+          let hasEmail = !!(updated?.email && updated.email.includes('@'));
+
+          // 回退：当 OSINT writeback 被阻断时，顶层 email 可能为空，
+          // 但 rawData.contactEnrichment 中仍保存了发现的邮箱
+          if (!hasEmail && updated?.rawData) {
+            try {
+              const raw = updated.rawData as Record<string, unknown>;
+              const contactEnrich = raw?.contactEnrichment as Record<string, unknown> | null;
+              const primaryEmail = contactEnrich?.primaryEmail as { value?: string } | null;
+              const emails = contactEnrich?.emails as Array<{ value?: string }> | null;
+              const rawEmail = primaryEmail?.value || emails?.[0]?.value;
+              if (rawEmail && rawEmail.includes('@')) {
+                hasEmail = true;
+                console.log(`[autoEnrich] Found email in rawData for ${candidateId}: ${rawEmail}`);
+              }
+            } catch {
+              // rawData 解析失败，忽略
+            }
+          }
+
           if (hasEmail && updated?.status !== 'IMPORTED') {
             try {
               await importCandidateToCompanyV2Internal(candidateId, session.user.id, session.user.tenantId);
               imported = true;
-              console.log(`[autoEnrich] Auto-imported ${candidateId} to leads (email: ${updated?.email})`);
+              console.log(`[autoEnrich] Auto-imported ${candidateId} to leads (email: ${updated?.email || 'from rawData'})`);
             } catch (err) {
               const msg = err instanceof Error ? err.message : String(err);
               if (!msg.includes('already imported')) {

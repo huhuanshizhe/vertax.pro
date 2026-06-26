@@ -278,9 +278,9 @@ export default function RadarSearchPage() {
           description: `抓取 ${result.fetched} 条，新增 ${result.created} 家，去重 ${result.duplicates} 家。`,
         });
 
-        // 自动触发联系人补全 + 入库（分批调用，每批 ≤6 家以适配 Vercel 60s 限制）
+        // 自动触发联系人补全 + 入库（分批调用，每批 ≤4 家以适配 Vercel 60s 限制）
         if (result.candidateIds.length > 0) {
-          const BATCH_SIZE = 6;
+          const BATCH_SIZE = 4;
           let totalEnriched = 0;
           let totalImported = 0;
           const allErrors: string[] = [];
