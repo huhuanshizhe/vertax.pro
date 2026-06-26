@@ -63,7 +63,10 @@ export type ContactSourceType =
   | "third_party_database"
   | "email_format_inferred"
   | "search_result"
-  | "mx_validated";
+  | "mx_validated"
+  | "firecrawl"
+  | "email_verified"
+  | "apollo_people_search";
 
 export interface ContactEntry {
   value: string;
@@ -212,8 +215,12 @@ export interface CompanyCapabilities {
   keywords: string[];
   descriptions?: string[];
   products?: string[];
+  services?: string[];
+  certifications?: string[];
+  industries?: string[];
   markets?: string[];
   targetIndustries?: string[];
+  summary?: string;
   sources: ContactSourceType[];
   sourceUrls?: string[];
 }

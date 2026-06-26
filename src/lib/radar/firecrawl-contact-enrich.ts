@@ -306,6 +306,8 @@ export async function extractContactsFromMarkdown(
         requiresLogin: Boolean(f.requiresLogin),
       })),
       capabilities: parsed.capabilities ? {
+        keywords: [] as string[],
+        sources: ['firecrawl'] as ContactSourceType[],
         products: Array.isArray(parsed.capabilities.products) ? parsed.capabilities.products : [],
         services: Array.isArray(parsed.capabilities.services) ? parsed.capabilities.services : [],
         certifications: Array.isArray(parsed.capabilities.certifications) ? parsed.capabilities.certifications : [],

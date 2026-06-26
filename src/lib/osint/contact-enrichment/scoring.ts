@@ -41,6 +41,9 @@ export const SOURCE_CONFIDENCE_MAP: Record<ContactSourceType, ContactConfidenceS
   'email_format_inferred': 30,
   'search_result': 60,
   'mx_validated': 85,
+  'firecrawl': 95,
+  'email_verified': 90,
+  'apollo_people_search': 80,
 };
 
 /**
