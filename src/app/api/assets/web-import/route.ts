@@ -103,8 +103,14 @@ export async function POST(req: NextRequest) {
     // Phase 3: Immediately trigger processing (don't wait for cron)
     // Fire-and-forget: start processing in background without blocking response
     // Cron will act as fallback if this background task is interrupted
-    const processUrl = new URL("/api/cron/web-crawl", req.url).toString();
-    fetch(processUrl, {
+    // Use request origin to construct reliable internal URL
+    const requestOrigin = req.headers.get("origin") ||
+      req.headers.get("host") ||
+      process.env.NEXT_PUBLIC_BASE_DOMAIN ||
+      "localhost:3000";
+    const protocol = requestOrigin.startsWith("http") ? "" : "https://";
+    const cronUrl = `${protocol}${requestOrigin}/api/cron/web-crawl`;
+    fetch(cronUrl, {
       method: "GET",
       headers: {
         "Authorization": `Bearer ${process.env.CRON_SECRET || "dev-secret"}`,

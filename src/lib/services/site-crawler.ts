@@ -40,6 +40,15 @@ export interface CrawlProgress {
   error?: string;
 }
 
+// 网页发现阶段总时间预算（Vercel Hobby 60s → 安全值 25s）
+const DISCOVERY_TIME_BUDGET_MS = 25_000;
+// BFS 爬取每页超时（收紧以适配时间预算）
+const CRAWL_PAGE_TIMEOUT_MS = 8_000;
+// BFS 页面间延迟
+const CRAWL_INTER_PAGE_DELAY_MS = 150;
+// BFS 最大爬取页数（时间预算内安全值）
+const CRAWL_MAX_PAGES = 80;
+
 const DEFAULT_OPTIONS: CrawlOptions = {
   maxPages: 500,
   excludePaths: [
@@ -58,7 +67,7 @@ const DEFAULT_OPTIONS: CrawlOptions = {
     // 搜索/过滤
     "/search", "/?s=", "/?q=", "/filter", "/sort",
   ],
-  timeout: 15000,
+  timeout: CRAWL_PAGE_TIMEOUT_MS,
 };
 
 // 跳过的文件扩展名
@@ -88,24 +97,35 @@ export async function discoverPages(
   rootUrl: string,
   options: Partial<CrawlOptions> = {}
 ): Promise<{ urls: string[]; method: "sitemap" | "crawl" }> {
+  const discoveryStart = Date.now();
   const opts = { ...DEFAULT_OPTIONS, ...options };
 
   // 规范化根 URL
   const normalizedRoot = normalizeUrl(rootUrl);
   const rootHostname = new URL(normalizedRoot).hostname;
 
-  // 1. 尝试 sitemap
-  const sitemapUrls = await parseSitemap(normalizedRoot);
-  if (sitemapUrls.length > 0) {
-    const filtered = filterUrls(sitemapUrls, rootHostname, opts);
-    return {
-      urls: filtered.slice(0, opts.maxPages),
-      method: "sitemap",
-    };
+  // 1. 尝试 sitemap（sitemap 解析内部有逐 URL 10s 超时）
+  const sitemapElapsed = Date.now() - discoveryStart;
+  if (sitemapElapsed < DISCOVERY_TIME_BUDGET_MS - 5_000) {
+    const sitemapUrls = await parseSitemap(normalizedRoot);
+    if (sitemapUrls.length > 0) {
+      const filtered = filterUrls(sitemapUrls, rootHostname, opts);
+      return {
+        urls: filtered.slice(0, opts.maxPages),
+        method: "sitemap",
+      };
+    }
   }
 
-  // 2. BFS 链接爬取
-  const crawledUrls = await crawlLinks(normalizedRoot, rootHostname, opts);
+  // 2. BFS 链接爬取（限时 + 限量）
+  const remainingMs = DISCOVERY_TIME_BUDGET_MS - (Date.now() - discoveryStart);
+  if (remainingMs <= 3_000) {
+    console.warn(`[discoverPages] Insufficient time budget for BFS crawl (${remainingMs}ms remaining), returning empty`);
+    return { urls: [], method: "crawl" };
+  }
+
+  const bfsOpts = { ...opts, maxPages: Math.min(opts.maxPages, CRAWL_MAX_PAGES) };
+  const crawledUrls = await crawlLinks(normalizedRoot, rootHostname, bfsOpts, discoveryStart);
   return {
     urls: crawledUrls.slice(0, opts.maxPages),
     method: "crawl",
@@ -223,7 +243,8 @@ async function fetchSingleSitemap(url: string): Promise<string[]> {
 async function crawlLinks(
   startUrl: string,
   rootHostname: string,
-  opts: CrawlOptions
+  opts: CrawlOptions,
+  discoveryStart: number = Date.now()
 ): Promise<string[]> {
   const visited = new Set<string>();
   const queue: string[] = [startUrl];
@@ -232,12 +253,19 @@ async function crawlLinks(
   visited.add(normalizeUrl(startUrl));
 
   while (queue.length > 0 && discovered.length < opts.maxPages) {
+    // 时间预算检查
+    const elapsed = Date.now() - discoveryStart;
+    if (elapsed > DISCOVERY_TIME_BUDGET_MS - 2_000) {
+      console.warn(`[crawlLinks] Time budget exhausted after ${discovered.length} pages (${elapsed}ms), stopping BFS`);
+      break;
+    }
+
     const currentUrl = queue.shift()!;
     discovered.push(currentUrl);
 
     // 延迟避免被封
     if (discovered.length > 1) {
-      await delay(500);
+      await delay(CRAWL_INTER_PAGE_DELAY_MS);
     }
 
     try {

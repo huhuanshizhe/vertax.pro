@@ -31,6 +31,7 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
   const [status, setStatus] = useState<PollStatus | null>(null);
   const [error, setError] = useState("");
   const [isPolling, setIsPolling] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const reset = useCallback(() => {
@@ -88,6 +89,7 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
 
   const handleSubmit = async () => {
     setError("");
+    setIsSubmitting(true);
 
     // URL validation
     try {
@@ -104,6 +106,15 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
         credentials: "include",
         body: JSON.stringify({ url, maxPages }),
       });
+
+      // 防御：检查 Content-Type 避免解析非 JSON 响应
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) {
+        const text = await res.text().catch(() => "");
+        throw new Error(
+          `服务器返回非 JSON 响应 (${res.status})${text ? "：" + text.slice(0, 200) : ""}`
+        );
+      }
 
       const data = await res.json();
 
@@ -127,6 +138,8 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
     } catch (err) {
       console.error("[web-import] Error:", err);
       setError(err instanceof Error ? err.message : "Failed to start crawl task");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -229,15 +242,24 @@ export function WebImportDialog({ open, onClose, onComplete }: WebImportDialogPr
               {/* Submit Button */}
               <button
                 onClick={handleSubmit}
-                disabled={!url}
+                disabled={!url || isSubmitting}
                 className="w-full py-4 rounded-xl font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   background: "var(--ci-accent)",
                   color: "#000000",
                 }}
               >
-                开始采集
-                <ArrowRight className="w-5 h-5" />
+                {isSubmitting ? (
+                  <>
+                    <Loader2 className="w-5 h-5 animate-spin" />
+                    正在发现页面…
+                  </>
+                ) : (
+                  <>
+                    开始采集
+                    <ArrowRight className="w-5 h-5" />
+                  </>
+                )}
               </button>
             </>
           )}
