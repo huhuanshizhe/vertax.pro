@@ -226,7 +226,7 @@ interface SerpApiResponse {
 }
 
 async function fetchSerpData(keyword: string): Promise<SerpApiResponse | null> {
-  const serpApiKey = process.env.SERPAPI_KEY;
+  const serpApiKey = process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY;
   const braveKey = process.env.BRAVE_SEARCH_API_KEY;
   if (!serpApiKey && !braveKey) return null;
 

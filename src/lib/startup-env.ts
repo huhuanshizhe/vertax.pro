@@ -15,6 +15,7 @@ const OPTIONAL_RUNTIME_KEYS = [
   "GOOGLE_MAPS_API_KEY",
   "BRAVE_SEARCH_API_KEY",
   "SERPAPI_KEY",
+  "SERPAPI_API_KEY",
   "EXA_API_KEY",
   "TAVILY_API_KEY",
   "FIRECRAWL_API_KEY",
@@ -50,8 +51,8 @@ function getRequiredStartupKeys() {
       requiredAtStartup: true,
     },
     {
-      name: "DASHSCOPE_API_KEY",
-      configured: isConfigured("DASHSCOPE_API_KEY"),
+      name: "TEXT_API_KEY",
+      configured: isConfigured("TEXT_API_KEY"),
       requiredAtStartup: true,
     },
   ] satisfies RuntimeKeyStatus[];

@@ -79,7 +79,7 @@ export class AISearchAdapter implements RadarAdapter {
 
   constructor(config: AdapterConfig & { workspaceId?: string }) {
     this.timeout = config.timeout || 60000;
-    this.searchApiKey = config.apiKey || process.env.SERPAPI_KEY || process.env.BRAVE_SEARCH_API_KEY;
+    this.searchApiKey = config.apiKey || process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.BRAVE_SEARCH_API_KEY;
     this.workspaceId = config.workspaceId;
   }
 
@@ -250,13 +250,13 @@ export class AISearchAdapter implements RadarAdapter {
       try {
         let items: WebSearchResult[] = [];
         
-        if (!process.env.SERPAPI_KEY && !process.env.BRAVE_SEARCH_API_KEY) {
+        if (!process.env.SERPAPI_KEY && !process.env.SERPAPI_API_KEY && !process.env.BRAVE_SEARCH_API_KEY) {
           console.warn('No search API key configured');
           continue;
         }
         // 并行调用 SerpAPI（主）+ Brave（补充），合并去重
         const [serpItems, braveItems] = await Promise.allSettled([
-          process.env.SERPAPI_KEY ? this.searchWithSerpAPI(q.query, targetCountry) : Promise.resolve([]),
+          (process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY) ? this.searchWithSerpAPI(q.query, targetCountry) : Promise.resolve([]),
           process.env.BRAVE_SEARCH_API_KEY ? this.searchWithBrave(q.query, targetCountry) : Promise.resolve([]),
         ]);
         const serpResults = serpItems.status === 'fulfilled' ? serpItems.value : [];
@@ -287,7 +287,7 @@ export class AISearchAdapter implements RadarAdapter {
   ): Promise<WebSearchResult[]> {
     const params = new URLSearchParams({
       q: query,
-      api_key: process.env.SERPAPI_KEY!,
+      api_key: process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || '',
       engine: 'google',
       num: '30', // 增加到30条，最大化潜在客户挖掘
       hl: 'en',
@@ -514,7 +514,7 @@ ${JSON.stringify(allItems.slice(0, 15).map(item => ({
   }
 
   async healthCheck(): Promise<HealthStatus> {
-    const hasSerpApi = !!process.env.SERPAPI_KEY;
+    const hasSerpApi = !!(process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY);
     const hasBrave = !!process.env.BRAVE_SEARCH_API_KEY;
     const channel = hasSerpApi && hasBrave ? 'SerpAPI + Brave' : hasSerpApi ? 'SerpAPI only' : hasBrave ? 'Brave only' : 'none';
 

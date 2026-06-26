@@ -1,7 +1,16 @@
 /**
- * AI 客户端 - DashScope (通义千问) OpenAI 兼容模式
+ * AI 客户端 - 统一 Coding Plan (通义千问) OpenAI 兼容模式
  *
- * 使用 curl + 流式模式(stream:true) 调用 DashScope API。
+ * 主模型：
+ *   TEXT_API_KEY  - Coding Plan API Key (sk-sp-...)
+ *   TEXT_BASE_URL - Coding Plan 端点 (默认 https://coding.dashscope.aliyuncs.com/v1)
+ *   TEXT_MODEL    - 模型名 (默认 qwen3.7-plus)
+ *
+ * 备用模型（Coding Plan 配额不足时自动切换）：
+ *   OPENROUTER_API_KEY - OpenRouter API Key
+ *   OPENROUTER_MODEL   - 备用模型 (默认 qwen/qwen-plus)
+ *
+ * 使用 curl + 流式模式(stream:true) 调用 API。
  * 原因：
  *   1. Node.js https 模块在此 Windows 环境下 30s+ 请求会 ECONNRESET
  *   2. curl 使用 Windows Schannel 不受此限制
@@ -16,46 +25,54 @@ import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const DEFAULT_DASHSCOPE_BASE_URL =
-  "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-const DEFAULT_CODING_DASHSCOPE_BASE_URL =
+const DEFAULT_BASE_URL =
   "https://coding.dashscope.aliyuncs.com/v1/chat/completions";
-const CODING_DASHSCOPE_HOST = "coding.dashscope.aliyuncs.com";
-const DEFAULT_CODING_MODEL = "qwen3-coder-plus";
+const DEFAULT_MODEL = "qwen3.7-plus";
 
-// DeepSeek
-const DEEPSEEK_BASE_URL = "https://api.deepseek.com/v1/chat/completions";
+// ==================== OpenRouter 备用配置 ====================
+const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_FALLBACK_MODEL = "qwen/qwen-plus";
 
-function getDashScopeBaseUrl(apiKey?: string): string {
-  const configuredBaseUrl = process.env.DASHSCOPE_BASE_URL?.trim();
-  if (configuredBaseUrl) {
-    return configuredBaseUrl;
-  }
-
-  if (apiKey?.startsWith("sk-sp-")) {
-    return DEFAULT_CODING_DASHSCOPE_BASE_URL;
-  }
-
-  return DEFAULT_DASHSCOPE_BASE_URL;
+function getOpenRouterApiKey(): string {
+  return process.env.OPENROUTER_API_KEY?.trim() || "";
 }
 
-function resolveModel(requestedModel?: string, apiKey?: string): string {
-  const baseUrl = getDashScopeBaseUrl(apiKey);
+function getOpenRouterModel(): string {
+  return process.env.OPENROUTER_MODEL?.trim() || DEFAULT_FALLBACK_MODEL;
+}
+
+function isOpenRouterAvailable(): boolean {
+  return !!getOpenRouterApiKey();
+}
+
+// ==================== Coding Plan 配置 ====================
+
+function getBaseUrl(): string {
+  const configured = process.env.TEXT_BASE_URL?.trim();
+  if (configured) {
+    // 自动补全 /chat/completions 路径
+    return configured.endsWith("/chat/completions")
+      ? configured
+      : configured.replace(/\/+$/, "") + "/chat/completions";
+  }
+  return DEFAULT_BASE_URL;
+}
+
+function resolveModel(requestedModel?: string): string {
+  const codingModel = process.env.TEXT_MODEL?.trim() || DEFAULT_MODEL;
   const trimmedModel = requestedModel?.trim();
 
-  if (baseUrl.includes(CODING_DASHSCOPE_HOST)) {
-    const codingModel = process.env.DASHSCOPE_MODEL?.trim() || DEFAULT_CODING_MODEL;
-
-    if (trimmedModel && trimmedModel !== codingModel) {
-      console.warn(
-        `[chatCompletion] remapping model ${trimmedModel} -> ${codingModel} for coding endpoint`
-      );
-    }
-
-    return codingModel;
+  if (trimmedModel && trimmedModel !== codingModel) {
+    console.warn(
+      `[chatCompletion] remapping model ${trimmedModel} -> ${codingModel} (Coding Plan unified)`
+    );
   }
 
-  return trimmedModel || "qwen-plus";
+  return codingModel;
+}
+
+function getApiKey(): string {
+  return process.env.TEXT_API_KEY?.trim() || "";
 }
 
 interface ChatMessage {
@@ -182,7 +199,7 @@ async function chatCompletionViaFetch(
     topP = 0.8,
     timeout = 300,
   } = options;
-  const model = resolveModel(options.model, apiKey);
+  const model = resolveModel(options.model);
 
   const ts = Date.now();
   console.log(`[chatCompletion] fetch (non-stream), model=${model}, maxTokens=${maxTokens}`);
@@ -263,7 +280,7 @@ async function chatCompletionViaCurl(
     topP = 0.8,
     timeout = 300,
   } = options;
-  const model = resolveModel(options.model, apiKey);
+  const model = resolveModel(options.model);
 
   const requestBody = JSON.stringify({
     model,
@@ -337,42 +354,133 @@ async function chatCompletionViaCurl(
 }
 
 /**
- * 调用 DashScope AI 模型
+ * 调用 AI 模型 - 主 Coding Plan，失败自动切换 OpenRouter
  * - Vercel 环境：使用原生 fetch（更可靠，无需 curl）
  * - Windows 本地：使用 curl + stream 绕过 Node.js TLS 问题
+ * - 备用：OpenRouter（Coding Plan 配额不足/错误时自动切换）
  */
 export async function chatCompletion(
   messages: ChatMessage[],
   options: ChatCompletionOptions = {}
 ): Promise<ChatCompletionResponse> {
-  let model = options.model || process.env.AI_MODEL || "deepseek-chat";
-
-  // Auto-remap qwen models to DeepSeek when DashScope key is a placeholder
-  const isQwenModel = (model || "").startsWith("qwen");
-  const dashScopeKey = process.env.DASHSCOPE_API_KEY;
-  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
-  const isDashScopePlaceholder = !dashScopeKey || dashScopeKey.startsWith("sk-placeholder");
-
-  if (isQwenModel && isDashScopePlaceholder && deepSeekKey) {
-    console.log(`[chatCompletion] Auto-remapping ${model} -> deepseek-v4-pro (DashScope key is placeholder)`);
-    model = process.env.AI_MODEL || "deepseek-chat";
-  }
-
-  const isDeepSeek = (model || "").toLowerCase().startsWith("deepseek");
-  const apiKey = isDeepSeek ? deepSeekKey : dashScopeKey;
-  const baseUrl = isDeepSeek ? DEEPSEEK_BASE_URL : getDashScopeBaseUrl(apiKey);
+  const apiKey = getApiKey();
+  const baseUrl = getBaseUrl();
 
   if (!apiKey) {
-    throw new Error(isDeepSeek ? "DEEPSEEK_API_KEY is not configured" : "DASHSCOPE_API_KEY is not configured");
+    throw new Error("TEXT_API_KEY is not configured");
   }
 
+  // Coding Plan 统一模型：所有请求使用 TEXT_MODEL
+  const model = resolveModel(options.model);
   const resolvedOptions = { ...options, model };
 
-  if (process.env.VERCEL) {
-    return chatCompletionViaFetch(apiKey, baseUrl, messages, resolvedOptions);
-  }
+  try {
+    if (process.env.VERCEL) {
+      return await chatCompletionViaFetch(apiKey, baseUrl, messages, resolvedOptions);
+    }
+    return await chatCompletionViaCurl(apiKey, baseUrl, messages, resolvedOptions);
+  } catch (primaryError) {
+    const errMsg = primaryError instanceof Error ? primaryError.message : String(primaryError);
+    console.warn(`[chatCompletion] Coding Plan failed: ${errMsg.slice(0, 200)}`);
 
-  return chatCompletionViaCurl(apiKey, baseUrl, messages, resolvedOptions);
+    // 尝试 OpenRouter 备用
+    if (isOpenRouterAvailable()) {
+      console.log(`[chatCompletion] Falling back to OpenRouter (${getOpenRouterModel()})...`);
+      try {
+        const fallbackOptions = { ...resolvedOptions, model: getOpenRouterModel() };
+        return await chatCompletionViaOpenRouter(messages, fallbackOptions);
+      } catch (fallbackError) {
+        const fbMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+        console.error(`[chatCompletion] OpenRouter fallback also failed: ${fbMsg.slice(0, 200)}`);
+        // 两个都失败，抛出原始错误
+        throw primaryError;
+      }
+    }
+
+    // 没有备用，抛出原始错误
+    throw primaryError;
+  }
+}
+
+/**
+ * 通过 OpenRouter API 调用 AI 模型（备用）
+ */
+async function chatCompletionViaOpenRouter(
+  messages: ChatMessage[],
+  options: ChatCompletionOptions
+): Promise<ChatCompletionResponse> {
+  const apiKey = getOpenRouterApiKey();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY not configured");
+
+  const model = options.model || getOpenRouterModel();
+  const temperature = options.temperature ?? 0.3;
+  const maxTokens = options.maxTokens ?? 4096;
+  const topP = options.topP ?? 0.8;
+  const timeout = options.timeout ?? 300;
+
+  const ts = Date.now();
+  console.log(`[chatCompletion] OpenRouter fetch, model=${model}, maxTokens=${maxTokens}`);
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout * 1000);
+
+  try {
+    const response = await fetch(OPENROUTER_BASE_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": process.env.NEXT_PUBLIC_BASE_DOMAIN || "https://vertax.pro",
+        "X-Title": "Vertax Radar",
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature,
+        max_tokens: maxTokens,
+        top_p: topP,
+        stream: false,
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text();
+      throw new Error(`OpenRouter HTTP ${response.status}: ${text.slice(0, 500)}`);
+    }
+
+    const data = (await response.json()) as {
+      model?: string;
+      error?: unknown;
+      choices?: Array<{ message?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
+
+    if (data.error) {
+      throw new Error(`OpenRouter error: ${JSON.stringify(data.error)}`);
+    }
+
+    const content = data.choices?.[0]?.message?.content || "";
+    if (!content) {
+      throw new Error("OpenRouter returned empty content");
+    }
+
+    console.log(
+      `[chatCompletion] OpenRouter done: ${content.length} chars, model=${data.model || model}, ${Date.now() - ts}ms`
+    );
+
+    return {
+      content,
+      model: data.model || model,
+      usage: {
+        promptTokens: data.usage?.prompt_tokens || 0,
+        completionTokens: data.usage?.completion_tokens || 0,
+        totalTokens: data.usage?.total_tokens || 0,
+      },
+    };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -628,34 +736,26 @@ export function createStreamingResponse(
   messages: ChatMessage[],
   options: ChatCompletionOptions = {}
 ): Response {
-  let model = options.model || process.env.AI_MODEL || "deepseek-chat";
-
-  // Auto-remap qwen models to DeepSeek
-  const isQwenModel = (model || "").startsWith("qwen");
-  const dashScopeKey = process.env.DASHSCOPE_API_KEY;
-  const deepSeekKey = process.env.DEEPSEEK_API_KEY;
-  const isDashScopePlaceholder = !dashScopeKey || dashScopeKey.startsWith("sk-placeholder");
-  if (isQwenModel && isDashScopePlaceholder && deepSeekKey) {
-    model = process.env.AI_MODEL || "deepseek-chat";
-  }
-
-  const isDeepSeek = (model || "").toLowerCase().startsWith("deepseek");
-  const apiKey = isDeepSeek ? deepSeekKey : dashScopeKey;
-  const baseUrl = isDeepSeek ? DEEPSEEK_BASE_URL : getDashScopeBaseUrl(apiKey);
+  const apiKey = getApiKey();
+  const baseUrl = getBaseUrl();
 
   if (!apiKey) {
-    return new Response(JSON.stringify({ error: "API key not configured" }), {
+    return new Response(JSON.stringify({ error: "TEXT_API_KEY not configured" }), {
       status: 500,
       headers: { "Content-Type": "application/json" },
     });
   }
+
+  // Coding Plan 统一模型
+  const model = resolveModel(options.model);
+
   const {
     temperature = 0.3,
     maxTokens = 4096,
     topP = 0.8,
     timeout = 300,
   } = options;
-  const resolvedModel = resolveModel(model, apiKey);
+  const resolvedModel = resolveModel(model);
 
   // 构建实时流
   const stream = new ReadableStream({

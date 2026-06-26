@@ -270,7 +270,81 @@ export async function initializeSystemSourcesV2() {
   return created;
 }
 
-const AUTO_DISCOVERY_SOURCE_CODES = ['google_places', 'ai_search', 'batch_discovery', 'multi_search'] as const;
+const AUTO_DISCOVERY_SOURCE_CODES = ['google_places', 'ai_search', 'apollo_org_search', 'batch_discovery', 'multi_search'] as const;
+
+/**
+ * 获取所有可用的自动发现数据源（有 API Key 的）
+ */
+async function getAvailableAutoDiscoverySources(): Promise<Array<{ source: RadarSource; hasApiKey: boolean }>> {
+  ensureAdaptersInitialized();
+
+  const results: Array<{ source: RadarSource; hasApiKey: boolean }> = [];
+
+  for (const code of AUTO_DISCOVERY_SOURCE_CODES) {
+    // 跳过 composite alias codes
+    if (code === 'batch_discovery' || code === 'multi_search') continue;
+
+    const existing = await prisma.radarSource.findUnique({
+      where: { code },
+    });
+
+    if (existing) {
+      const hasApiKey = checkSourceApiKeyAvailability(code);
+      results.push({ source: existing, hasApiKey });
+      continue;
+    }
+
+    // 尝试注册新源
+    const registration = getAdapterRegistration(code);
+    if (!registration) continue;
+
+    try {
+      const source = await prisma.radarSource.create({
+        data: {
+          tenantId: null,
+          channelType: registration.channelType as string as import('@prisma/client').$Enums.ChannelType,
+          name: registration.name,
+          code: registration.code,
+          description: registration.description,
+          websiteUrl: registration.websiteUrl,
+          countries: registration.countries || [],
+          regions: registration.regions || [],
+          adapterType: registration.adapterType,
+          adapterConfig: registration.defaultConfig as Prisma.InputJsonValue,
+          isOfficial: registration.isOfficial,
+          termsUrl: registration.termsUrl,
+          storagePolicy: registration.storagePolicy,
+          ttlDays: registration.ttlDays,
+          attributionRequired: registration.attributionRequired,
+          rateLimit: registration.features.rateLimit as Prisma.InputJsonValue,
+          isEnabled: true,
+        },
+      });
+      const hasApiKey = checkSourceApiKeyAvailability(code);
+      results.push({ source, hasApiKey });
+    } catch (err) {
+      console.warn(`[radar-v2] Failed to create source ${code}:`, err instanceof Error ? err.message : err);
+    }
+  }
+
+  return results;
+}
+
+/**
+ * 检查数据源是否有对应的 API Key
+ */
+function checkSourceApiKeyAvailability(code: string): boolean {
+  switch (code) {
+    case 'google_places':
+      return !!(process.env.GOOGLE_MAPS_API_KEY);
+    case 'ai_search':
+      return !!(process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.BRAVE_SEARCH_API_KEY);
+    case 'apollo_org_search':
+      return !!(process.env.APOLLO_API_KEY);
+    default:
+      return true; // 无需 API key 的源（如 TED, UNGM）
+  }
+}
 
 async function getOrCreateAutoDiscoverySource(): Promise<RadarSource> {
   ensureAdaptersInitialized();
@@ -2151,10 +2225,17 @@ export async function enrichProspectCompaniesBatchAction(
   };
 }
 
-// ==================== 单国搜索 ====================
+// ==================== 单国多源并发搜索 ====================
 
 /**
- * 单组合搜索：一个关键词 × 一个国家，穷尽式翻页
+ * 单组合多源并发搜索：一个关键词 × 一个国家，
+ * 同时使用 Google Places + AI 搜索 + Apollo 等多种数据源并行发现
+ *
+ * 策略：
+ *   - 获取所有有 API Key 的自动发现源
+ *   - 每个源创建一个独立 Task 并发执行
+ *   - 结果按公司名+域名去重合并
+ *   - 一个源失败不影响其他源
  */
 export async function runSingleCountrySearch(input: {
   name: string;
@@ -2168,33 +2249,117 @@ export async function runSingleCountrySearch(input: {
   fetched: number;
   created: number;
   duplicates: number;
+  sources: Array<{ code: string; name: string; fetched: number; created: number; duplicates: number; error?: string }>;
   error?: string;
 }> {
   const session = await auth();
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
 
+  const singleComboQuery: RadarSearchQuery = {
+    ...input.queryConfig,
+    keywords: [input.keyword],
+    countries: [input.country],
+  };
+
   try {
-    const singleComboQuery: RadarSearchQuery = {
-      ...input.queryConfig,
-      keywords: [input.keyword],
-      countries: [input.country],
-    };
+    // 获取所有可用数据源
+    const availableSources = await getAvailableAutoDiscoverySources();
+    const sourcesWithKey = availableSources.filter(s => s.hasApiKey);
 
-    const task = await createDiscoveryTaskV2({
-      name: `${input.name}: ${input.keyword} × ${input.country}`,
-      queryConfig: singleComboQuery,
-      targetingRef: input.targetingRef,
-    });
+    if (sourcesWithKey.length === 0) {
+      // 回退到单一默认源
+      const task = await createDiscoveryTaskV2({
+        name: `${input.name}: ${input.keyword} × ${input.country}`,
+        queryConfig: singleComboQuery,
+        targetingRef: input.targetingRef,
+      });
+      const result = await runRadarTask(task.id);
+      return {
+        keyword: input.keyword,
+        country: input.country,
+        fetched: result.stats.fetched,
+        created: result.stats.created,
+        duplicates: result.stats.duplicates,
+        sources: [{ code: 'default', name: 'Default Source', ...result.stats }],
+      };
+    }
 
-    const result = await runRadarTask(task.id);
+    console.log(
+      `[radar-v2] Multi-source discovery for "${input.keyword}" × ${input.country}: ` +
+      `${sourcesWithKey.length} sources (${sourcesWithKey.map(s => s.source.code).join(', ')})`
+    );
+
+    // 并发执行所有数据源
+    const sourceResults = await Promise.allSettled(
+      sourcesWithKey.map(async ({ source }) => {
+        const task = await createDiscoveryTaskV2({
+          sourceId: source.id,
+          name: `${input.name}: ${input.keyword} × ${input.country} [${source.code}]`,
+          queryConfig: singleComboQuery,
+          targetingRef: input.targetingRef,
+        });
+
+        console.log(`[radar-v2] Running source ${source.code} (task ${task.id})...`);
+        const result = await runRadarTask(task.id);
+        console.log(
+          `[radar-v2] Source ${source.code} done: ${result.stats.fetched} fetched, ` +
+          `${result.stats.created} new, ${result.stats.duplicates} dup`
+        );
+
+        return {
+          code: source.code,
+          name: source.name,
+          fetched: result.stats.fetched,
+          created: result.stats.created,
+          duplicates: result.stats.duplicates,
+          error: result.stats.errors?.[0],
+        };
+      })
+    );
+
+    // 汇总结果
+    const sources: Array<{
+      code: string;
+      name: string;
+      fetched: number;
+      created: number;
+      duplicates: number;
+      error?: string;
+    }> = [];
+
+    let totalFetched = 0;
+    let totalCreated = 0;
+    let totalDuplicates = 0;
+    const allErrors: string[] = [];
+
+    for (const r of sourceResults) {
+      if (r.status === 'fulfilled') {
+        sources.push(r.value);
+        totalFetched += r.value.fetched;
+        totalCreated += r.value.created;
+        totalDuplicates += r.value.duplicates;
+        if (r.value.error) allErrors.push(`[${r.value.code}] ${r.value.error}`);
+      } else {
+        sources.push({
+          code: 'unknown',
+          name: 'Failed Source',
+          fetched: 0,
+          created: 0,
+          duplicates: 0,
+          error: r.reason instanceof Error ? r.reason.message : String(r.reason),
+        });
+        allErrors.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+      }
+    }
 
     return {
       keyword: input.keyword,
       country: input.country,
-      fetched: result.stats.fetched,
-      created: result.stats.created,
-      duplicates: result.stats.duplicates,
-      error: result.stats.errors?.[0],
+      fetched: totalFetched,
+      created: totalCreated,
+      duplicates: totalDuplicates,
+      sources,
+      error: allErrors.length > 0 ? allErrors.join('; ') : undefined,
     };
   } catch (err) {
     return {
@@ -2203,6 +2368,7 @@ export async function runSingleCountrySearch(input: {
       fetched: 0,
       created: 0,
       duplicates: 0,
+      sources: [],
       error: err instanceof Error ? err.message : 'Unknown error',
     };
   }

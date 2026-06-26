@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma';
 
 const ENV_KEY_ALIASES: Record<string, string> = {
   brave_search: 'BRAVE_SEARCH_API_KEY',
-  dashscope: 'DASHSCOPE_API_KEY',
+  dashscope: 'TEXT_API_KEY',
   exa: 'EXA_API_KEY',
   firecrawl: 'FIRECRAWL_API_KEY',
   gemini: 'GEMINI_API_KEY',
@@ -12,6 +12,7 @@ const ENV_KEY_ALIASES: Record<string, string> = {
   pdl: 'PDL_API_KEY',
   resend: 'RESEND_API_KEY',
   serper: 'SERPAPI_KEY',
+  serpapi: 'SERPAPI_API_KEY',
   tavily: 'TAVILY_API_KEY',
 };
 

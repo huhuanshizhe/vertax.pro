@@ -1,12 +1,15 @@
 /**
- * 获客雷达情报丰富化模块
+ * 获客雷达情报丰富化模�?
  *
- * Phase 2: 使用 funding-tracker, news-intelligence, linkedin-research skills 的能力
- * 为候选公司丰富情报数据，提升评估准确性
+ * Phase 2: 使用 funding-tracker, news-intelligence, linkedin-research skills 的能�?
+ * 为候选公司丰富情报数据，提升评估准确�?
  * 
- * 2026-04-01 增强：
- * - 集成 Hunter.io 自动查找联系人邮箱
- * - 集成 Tavily AI 搜索作为 Exa 的补充/备份
+ * 2026-04-01 增强�?
+ * - 集成 Hunter.io 自动查找联系人邮�?
+ * - 集成 Tavily AI 搜索作为 Exa 的补�?备份
+ * 
+ * 2026-06-14 增强�?
+ * - 集成 Firecrawl 官网抓取替代�?fetch，解�?JS 渲染/反爬问题
  */
 
 import { prisma } from '@/lib/prisma';
@@ -26,6 +29,7 @@ import {
   runRadarOsintCheckpoint,
 } from './enrichment-policy';
 import { enrichCandidateWithExa } from './exa-enrich';
+import { enrichCompanyContacts } from './firecrawl-contact-enrich';
 import { safeFetch } from '@/lib/ssrf';
 import { resolveApiKey } from '@/lib/services/api-key-resolver';
 import {
@@ -47,7 +51,7 @@ export interface IntelligenceData {
     recentNews?: string;
   };
 
-  // 新闻动态
+  // 新闻动�?
   news?: {
     recentHeadlines?: string[];
     sentiment?: 'positive' | 'neutral' | 'negative';
@@ -55,7 +59,7 @@ export interface IntelligenceData {
     lastNewsDate?: string;
   };
 
-  // LinkedIn 联系人
+  // LinkedIn 联系�?
   contacts?: {
     decisionMakers?: Array<{
       name: string;
@@ -149,7 +153,7 @@ interface GooglePlacesIdentityEnrichment {
 }
 
 /**
- * 统一搜索封装：优先使用 Exa，若失败或无结果则尝试 Tavily
+ * 统一搜索封装：优先使�?Exa，若失败或无结果则尝�?Tavily
  */
 export async function unifiedSearch(
   query: string, 
@@ -160,7 +164,7 @@ export async function unifiedSearch(
   // 1. 尝试 Exa
   let results = await exaSearch(query, type, numResults, country);
   
-  // 2. 如果 Exa 没结果且有 Tavily Key，尝试 Tavily
+  // 2. 如果 Exa 没结果且�?Tavily Key，尝�?Tavily
   if (
     results.length === 0 &&
     isRadarSearchEngineEnabled('tavily') &&
@@ -282,7 +286,7 @@ export async function hunterFindEmail(domain: string, fullName: string): Promise
     const apiKey = process.env.HUNTER_API_KEY;
     if (!apiKey || !domain) return { email: null, confidence: 0 };
 
-    // 简单拆分姓名
+    // 简单拆分姓�?
     const parts = fullName.trim().split(/\s+/);
     const firstName = parts[0] || '';
     const lastName = parts.length > 1 ? parts[parts.length - 1] : '';
@@ -334,7 +338,7 @@ function extractGooglePlaceId(value: string | undefined | null): string | null {
     return decodeURIComponent(placeIdMatch[1]);
   }
 
-  // Google place_id 通常是较长的稳定 ID，保留为兜底解析。
+  // Google place_id 通常是较长的稳定 ID，保留为兜底解析�?
   if (/^[A-Za-z0-9_-]{20,}$/.test(trimmed)) {
     return trimmed;
   }
@@ -554,13 +558,13 @@ async function searchFunding(
     const aiResponse = await chatCompletion([
       {
         role: 'system',
-        content: `从以下搜索结果中提取融资信息。返回 JSON 格式：
+        content: `从以下搜索结果中提取融资信息。返�?JSON 格式�?
 {
   "totalRaised": "总融资额，如 $100M",
-  "latestRound": "最新轮次，如 Series B",
+  "latestRound": "最新轮次，�?Series B",
   "latestRoundDate": "日期，如 2024",
-  "valuation": "估值，如 $1B",
-  "leadInvestors": ["投资者1", "投资者2"]
+  "valuation": "估值，�?$1B",
+  "leadInvestors": ["投资�?", "投资�?"]
 }
 如果信息不完整，只返回能确定的字段。`
       },
@@ -578,7 +582,7 @@ async function searchFunding(
 }
 
 /**
- * 获取新闻动态
+ * 获取新闻动�?
  */
 async function searchNews(
   companyName: string,
@@ -595,7 +599,7 @@ async function searchNews(
     const aiResponse = await chatCompletion([
       {
         role: 'system',
-        content: `分析以下新闻内容的情绪和主题。返回 JSON：{"sentiment": "positive|neutral|negative", "themes": ["主题1"]}`
+        content: `分析以下新闻内容的情绪和主题。返�?JSON：{"sentiment": "positive|neutral|negative", "themes": ["主题1"]}`
       },
       { role: 'user', content: content }
     ], { model: 'qwen-plus', temperature: 0.1 });
@@ -623,7 +627,7 @@ function extractPhone(text: string): string | null {
 }
 
 /**
- * 获取联系人并尝试补全邮箱和电话
+ * 获取联系人并尝试补全邮箱和电�?
  */
 async function searchContacts(
   companyName: string,
@@ -653,7 +657,7 @@ async function searchContacts(
     const parsed = JSON.parse(aiResponse.content.trim().replace(/```json|```/g, ''));
     const makers = parsed.decisionMakers || [];
 
-    // 如果有域名，尝试用 Hunter.io 查找邮箱
+    // 如果有域名，尝试�?Hunter.io 查找邮箱
     if (allowPaidContactEnrichment && normalizedDomain && makers.length > 0) {
       console.log(`[RadarEnrich] Finding emails for ${makers.length} contacts of ${companyName} via Hunter.io...`);
       for (const person of makers) {
@@ -665,7 +669,7 @@ async function searchContacts(
             person.emailConfidence = hResult.confidence;
           }
         }
-        // 如果还没有电话，尝试从上下文中提取
+        // 如果还没有电话，尝试从上下文中提�?
         if (!person.phone) {
           const personContext = searchResults.find(r => r.text?.includes(person.name))?.text || '';
           if (personContext) {
@@ -781,6 +785,41 @@ export async function enrichCandidateIntelligence(
 
   await Promise.allSettled(tasks);
 
+  // ==================== Firecrawl 官网联系人抓取（优先级最高）====================
+  let firecrawlContactResult: Awaited<ReturnType<typeof enrichCompanyContacts>> | null = null;
+  if (options?.includeContacts !== false && workingWebsite) {
+    try {
+      firecrawlContactResult = await enrichCompanyContacts(workingWebsite, companyName);
+      if (firecrawlContactResult.emails.length > 0 || firecrawlContactResult.phones.length > 0) {
+        console.log(
+          `[RadarEnrich] Firecrawl found ${firecrawlContactResult.emails.length} emails, ` +
+          `${firecrawlContactResult.phones.length} phones for ${companyName}`
+        );
+        // �?Firecrawl 结果合并�?intelligence.contacts
+        if (!intelligence.contacts) intelligence.contacts = {};
+        if (!intelligence.contacts.companyContacts) {
+          intelligence.contacts.companyContacts = { emails: [], phones: [], linkedInUrls: [] };
+        }
+        const existingEmails = new Set(intelligence.contacts.companyContacts.emails?.map(e => e.toLowerCase()) || []);
+        for (const email of firecrawlContactResult.emails) {
+          if (!existingEmails.has(email.value.toLowerCase())) {
+            intelligence.contacts.companyContacts.emails!.push(email.value);
+            existingEmails.add(email.value.toLowerCase());
+          }
+        }
+        const existingPhones = new Set(intelligence.contacts.companyContacts.phones || []);
+        for (const phone of firecrawlContactResult.phones) {
+          if (!existingPhones.has(phone.value)) {
+            intelligence.contacts.companyContacts.phones!.push(phone.value);
+            existingPhones.add(phone.value);
+          }
+        }
+      }
+    } catch (error) {
+      errors.push(`Firecrawl contacts: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  }
+
   if (options?.includeContacts !== false) {
     try {
       const contactEnrichmentEngine = createContactEnrichmentEngine();
@@ -793,6 +832,64 @@ export async function enrichCandidateIntelligence(
       const contactResult = await contactEnrichmentEngine.deepEnrich(companyName, domain, contactOverrides);
       const contactCrmOutput = contactEnrichmentEngine.generateCRMOutput(contactResult);
       contactSnapshot = buildCandidateContactEnrichmentSnapshot(contactResult, contactCrmOutput);
+
+      // 合并 Firecrawl 高质量结果（置信度优先）
+      if (firecrawlContactResult && contactSnapshot) {
+        const fcEmails = firecrawlContactResult.emails.filter(e => e.value && e.confidence >= 90);
+        const fcPhones = firecrawlContactResult.phones.filter(p => p.value && p.confidence >= 90);
+        const fcAddresses = firecrawlContactResult.addresses.filter(a => a.value && a.confidence >= 85);
+
+        const existingEmailValues = new Set(contactSnapshot.emails.map(e => e.value.toLowerCase()));
+        for (const email of fcEmails) {
+          if (!existingEmailValues.has(email.value.toLowerCase())) {
+            contactSnapshot.emails.push(email);
+            existingEmailValues.add(email.value.toLowerCase());
+          }
+        }
+
+        const existingPhoneValues = new Set(contactSnapshot.phones.map(p => p.value));
+        for (const phone of fcPhones) {
+          if (!existingPhoneValues.has(phone.value)) {
+            contactSnapshot.phones.push(phone);
+            existingPhoneValues.add(phone.value);
+          }
+        }
+
+        const existingAddrValues = new Set(contactSnapshot.addresses.map(a => a.value.toLowerCase()));
+        for (const addr of fcAddresses) {
+          if (!existingAddrValues.has(addr.value.toLowerCase())) {
+            contactSnapshot.addresses.push(addr);
+            existingAddrValues.add(addr.value.toLowerCase());
+          }
+        }
+
+        // 添加 Firecrawl 发现的表单和能力信息
+        if (firecrawlContactResult.forms.length > 0) {
+          const existingFormUrls = new Set(contactSnapshot.contactForms.map(f => f.url));
+          for (const form of firecrawlContactResult.forms) {
+            if (!existingFormUrls.has(form.url)) {
+              contactSnapshot.contactForms.push(form);
+              existingFormUrls.add(form.url);
+            }
+          }
+        }
+
+        if (firecrawlContactResult.capabilities && contactSnapshot.capabilities) {
+          const existingCaps = new Set(contactSnapshot.capabilities);
+          const newCaps = [
+            ...(firecrawlContactResult.capabilities.products || []),
+            ...(firecrawlContactResult.capabilities.services || []),
+          ].filter(c => c && !existingCaps.has(c));
+          if (newCaps.length > 0) {
+            contactSnapshot.capabilities = [...(contactSnapshot.capabilities || []), ...newCaps];
+          }
+        }
+
+        // 添加 Firecrawl 作为数据来源
+        if (!contactSnapshot.dataSources.includes('firecrawl')) {
+          contactSnapshot.dataSources.push('firecrawl');
+        }
+      }
     } catch (error) {
       errors.push(`Contact enrichment: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -946,7 +1043,7 @@ export function calculateSignalScores(intelligence: IntelligenceData): SignalSco
 
   if (intelligence.contacts?.decisionMakers?.length) {
     contact = Math.min(100, intelligence.contacts.decisionMakers.length * 25);
-    // 如果有邮箱，联系人分数翻倍
+    // 如果有邮箱，联系人分数翻�?
     if (intelligence.contacts.decisionMakers.some(m => m.email)) contact = Math.min(100, contact + 30);
   }
 
@@ -962,7 +1059,7 @@ export function calculateSignalScores(intelligence: IntelligenceData): SignalSco
 }
 
 /**
- * 快捷调用：丰富 + 评分
+ * 快捷调用：丰�?+ 评分
  */
 export async function enrichWithSignalScore(candidateId: string) {
   const enrichment = await enrichCandidateIntelligence(candidateId);
@@ -973,7 +1070,7 @@ export async function enrichWithSignalScore(candidateId: string) {
     const foundEmail = enrichment.data.contacts?.decisionMakers?.find(m => m.email)?.email;
     const foundPhone = enrichment.data.contacts?.decisionMakers?.find(m => m.phone)?.phone;
     
-    // 获取候选当前状态
+    // 获取候选当前状�?
     const candidate = await prisma.radarCandidate.findUnique({
       where: { id: candidateId },
       select: { email: true, phone: true, rawData: true }
@@ -987,8 +1084,8 @@ export async function enrichWithSignalScore(candidateId: string) {
     await prisma.radarCandidate.update({
       where: { id: candidateId },
       data: {
-        matchScore: signals.overallScore, // 覆盖原始匹配分
-        // 回填邮箱和电话（如果之前没有）
+        matchScore: signals.overallScore, // 覆盖原始匹配�?
+        // 回填邮箱和电话（如果之前没有�?
         ...(foundEmail && !candidate?.email && { email: foundEmail }),
         ...(foundPhone && !candidate?.phone && { phone: foundPhone }),
         aiRelevance: aiRelevancePayload,
