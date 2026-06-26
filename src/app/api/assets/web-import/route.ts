@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { discoverPages, normalizeUrl, detectLanguagePrefix } from "@/lib/services/site-crawler";
+import { discoverPages, normalizeUrl, detectLanguagePrefix, matchesLanguagePrefix } from "@/lib/services/site-crawler";
 import crypto from "crypto";
 
 export const maxDuration = 60; // 1 minute - return quickly after queueing task
@@ -62,30 +62,52 @@ export async function POST(req: NextRequest) {
   const crawlBatchId = crypto.randomUUID();
 
   try {
+    // 检测语言前缀（多语言网站仅采一种语言）
+    const rootPathname = new URL(normalizedRoot).pathname;
+    const langPrefix = detectLanguagePrefix(rootPathname);
+
     // Phase 1: 尝试 sitemap（快速路径）
     const { urls: sitemapUrls, method } = await discoverPages(normalizedRoot, {
       maxPages: Math.min(maxPages, 1000),
     });
 
     if (sitemapUrls.length > 0) {
-      // ========== 模式 A：Sitemap 全量入队 ==========
+      // ========== 模式 A：Sitemap 全量入队（过滤语言） ==========
+      const filteredUrls = langPrefix
+        ? sitemapUrls.filter(u => matchesLanguagePrefix(u, langPrefix))
+        : sitemapUrls;
+
+      console.log(`[web-import] Sitemap found ${sitemapUrls.length} URLs${langPrefix ? `, filtered to ${filteredUrls.length} (lang: ${langPrefix})` : ""}`);
+
+      if (filteredUrls.length === 0) {
+        return new Response(JSON.stringify({
+          error: `No pages found for language "${langPrefix}". Try a URL matching the desired language.`,
+          method,
+          languagePrefix: langPrefix,
+        }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+
       const crawlTask = await db.crawlQueue.create({
         data: {
           tenantId,
           userId,
           batchId: crawlBatchId,
           rootUrl: normalizedRoot,
-          totalPages: sitemapUrls.length,
+          totalPages: filteredUrls.length,
           processedPages: 0,
           status: "pending",
           folderId: folderId || null,
-          urls: sitemapUrls.map((url, index) => ({
+          urls: filteredUrls.map((url, index) => ({
             url,
             status: "pending" as const,
             priority: index < 20 ? 1 : index < 100 ? 2 : 3,
           })),
           metadata: {
             discoveryMethod: method,
+            languagePrefix: langPrefix,
             requestedAt: new Date().toISOString(),
             maxPagesRequested: maxPages,
           },
@@ -98,10 +120,11 @@ export async function POST(req: NextRequest) {
         success: true,
         taskId: crawlTask.id,
         batchId: crawlBatchId,
-        discoveredPages: sitemapUrls.length,
+        discoveredPages: filteredUrls.length,
         method,
-        message: `Crawl task queued. Processing ${sitemapUrls.length} pages in background.`,
-        estimatedTimeSeconds: Math.ceil(sitemapUrls.length / 20),
+        languagePrefix: langPrefix,
+        message: `Crawl task queued. Processing ${filteredUrls.length} pages in background.`,
+        estimatedTimeSeconds: Math.ceil(filteredUrls.length / 20),
       }), {
         status: 202,
         headers: { "Content-Type": "application/json" },
@@ -109,9 +132,6 @@ export async function POST(req: NextRequest) {
     }
 
     // ========== 模式 B：增量爬取（无 sitemap） ==========
-    // 检测语言前缀，多语言网站仅采一种语言
-    const rootPathname = new URL(normalizedRoot).pathname;
-    const langPrefix = detectLanguagePrefix(rootPathname);
     console.log(`[web-import] No sitemap found, starting incremental crawl${langPrefix ? ` (lang: ${langPrefix})` : ""}`);
 
     const crawlTask = await db.crawlQueue.create({
