@@ -196,11 +196,79 @@ async function processCrawlTask(task: {
         continue;
       }
 
-      // Fetch content
+      // ===== 增量发现：先获取原始 HTML 提取链接 =====
+      // 必须单独 fetch 原始 HTML，因为 fetchWebContent 第一优先级 Jina 返回 Markdown，
+      // cheerio 无法从 Markdown 中提取 <a href> 链接
+      const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
+      let rawHtmlForLinks = "";
+      if (isIncremental) {
+        try {
+          const rawRes = await fetch(pageUrl, {
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+              Accept: "text/html,application/xhtml+xml",
+            },
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (rawRes.ok) {
+            const ct = rawRes.headers.get("content-type") || "";
+            if (ct.includes("text/html")) {
+              rawHtmlForLinks = await rawRes.text();
+            }
+          }
+        } catch {
+          // raw HTML fetch failed — will try scraped.html fallback below
+        }
+      }
+
+      // Fetch content (for asset creation)
       const scraped = await fetchWebContent(pageUrl, {
         maxChars: 30000,
         timeout: 15000,
       });
+
+      // ===== 增量发现：从 HTML 提取新链接（无论页面成功与否） =====
+      if (isIncremental) {
+        try {
+          const langPrefix = taskMetadata.languagePrefix ?? null;
+          const maxPages = (taskMetadata.maxPagesRequested as number) || 500;
+          const rootHostname = new URL(task.rootUrl).hostname;
+
+          // 优先用 raw fetch 的 HTML，降级到 scraped.html
+          const htmlForLinks = rawHtmlForLinks || scraped.html || "";
+          const newLinks = extractLinksFromHtml(htmlForLinks, pageUrl, rootHostname);
+
+          // 去重 + 语言前缀过滤
+          const knownUrls = new Set(urlsArray.map(u => normalizeUrl(u.url)));
+          const addedUrls: string[] = [];
+
+          for (const link of newLinks) {
+            if (addedUrls.length >= 20) break;
+            if (urlsArray.length + addedUrls.length >= maxPages) break;
+
+            const normalized = normalizeUrl(link);
+            if (knownUrls.has(normalized)) continue;
+            if (!matchesLanguagePrefix(normalized, langPrefix)) continue;
+
+            knownUrls.add(normalized);
+            addedUrls.push(normalized);
+          }
+
+          if (addedUrls.length > 0) {
+            const currentMaxPriority = urlsArray.reduce((max, u) => Math.max(max, u.priority), 0);
+            for (const newUrl of addedUrls) {
+              urlsArray.push({
+                url: newUrl,
+                status: "pending",
+                priority: currentMaxPriority + 1,
+              });
+            }
+            console.log(`[web-crawl] Incremental: +${addedUrls.length} new URLs (total: ${urlsArray.length})`);
+          }
+        } catch (err) {
+          console.warn(`[web-crawl] Link extraction failed for ${pageUrl}:`, err);
+        }
+      }
 
       if (!scraped.success || isLowValuePage(pageUrl, scraped.content)) {
         failed++;
@@ -272,49 +340,6 @@ async function processCrawlTask(task: {
       item.assetId = asset.id;
       item.processedAt = new Date().toISOString();
       processed++;
-
-      // ===== 增量发现：从本页提取新链接追加入队 =====
-      const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
-      const langPrefix = taskMetadata.languagePrefix ?? null;
-      const maxPages = (taskMetadata.maxPagesRequested as number) || 500;
-
-      if (isIncremental) {
-        try {
-          const rootHostname = new URL(task.rootUrl).hostname;
-          const newLinks = extractLinksFromHtml(scraped.html, pageUrl, rootHostname);
-
-          // 过滤语言前缀 + 去重已有 URL
-          const knownUrls = new Set(urlsArray.map(u => normalizeUrl(u.url)));
-          const addedUrls: string[] = [];
-
-          for (const link of newLinks) {
-            if (addedUrls.length >= 20) break; // 每次最多追加 20 条，避免单批膨胀过大
-            if (urlsArray.length + addedUrls.length >= maxPages) break;
-
-            const normalized = normalizeUrl(link);
-            if (knownUrls.has(normalized)) continue;
-            if (!matchesLanguagePrefix(normalized, langPrefix)) continue;
-
-            knownUrls.add(normalized);
-            addedUrls.push(normalized);
-          }
-
-          if (addedUrls.length > 0) {
-            const currentMaxPriority = urlsArray.reduce((max, u) => Math.max(max, u.priority), 0);
-            for (const newUrl of addedUrls) {
-              urlsArray.push({
-                url: newUrl,
-                status: "pending",
-                priority: currentMaxPriority + 1, // 新发现页面优先级低于已有页面
-              });
-            }
-            console.log(`[web-crawl] Incremental: added ${addedUrls.length} new URLs (total: ${urlsArray.length})`);
-          }
-        } catch (err) {
-          // 增量发现失败不影响当前页面处理
-          console.warn(`[web-crawl] Link extraction failed for ${pageUrl}:`, err);
-        }
-      }
 
       // Rate limiting: 200ms between pages
       await new Promise((r) => setTimeout(r, 200));
