@@ -201,10 +201,38 @@ export async function getRadarStats(): Promise<RadarStats> {
 
 // ===================== AI Research =====================
 
+/** 简单 HTML 标签剥离，防止 XSS */
+function stripHtml(input: string): string {
+  return input.replace(/<[^>]*>/g, '').trim();
+}
+
+/** 校验邮箱格式 */
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+}
+
+/** 校验 URL 格式 */
+function isValidUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
 export async function runAIResearch(query: string): Promise<LeadData[]> {
   const session = await auth();
   if (!session?.user?.id) {
     throw new Error("未登录");
+  }
+
+  // 输入长度限制，防止提示注入和 API 成本滥用
+  if (typeof query !== 'string' || query.trim().length === 0) {
+    throw new Error("查询内容不能为空");
+  }
+  if (query.length > 500) {
+    throw new Error("查询内容不能超过500字符");
   }
 
   const user = await prisma.user.findUnique({
@@ -218,7 +246,10 @@ export async function runAIResearch(query: string): Promise<LeadData[]> {
 
   // 获取ICP数据
   const icp = await getICP();
-  
+
+  // 清理查询内容，防止提示注入
+  const sanitizedQuery = query.replace(/[`$\\]/g, '').trim();
+
   // 构建AI调研prompt
   const systemPrompt = `你是一个专业的B2B销售线索调研助手。
 你的任务是根据用户的查询和ICP（理想客户画像）数据，生成符合条件的潜在客户列表。
@@ -233,7 +264,7 @@ ${icp ? `
 
 请生成3-5个虚拟但符合真实业务场景的潜在客户数据。
 每个客户必须包含：
-1. 公司名称（真实感强的企业名）
+1. 公司名称（真实感强的企业名，纯文本，不含HTML）
 2. 行业
 3. 地区（国家/城市）
 4. 公司规模
@@ -261,7 +292,7 @@ ${icp ? `
 
 只返回JSON数组，不要有其他文字。`;
 
-  const userPrompt = `请根据以下查询调研潜在客户：${query}`;
+  const userPrompt = `请根据以下查询调研潜在客户：${sanitizedQuery}`;
 
   try {
     const response = await aiClient.chat.completions.create({
@@ -302,8 +333,27 @@ ${icp ? `
 
     // 批量创建线索
     const createdLeads: LeadData[] = [];
-    
-    for (const data of leadsData) {
+
+    for (const raw of leadsData) {
+      // 清洗 AI 输出字段，防止 XSS 和无效数据
+      const data = {
+        companyName: stripHtml(raw.companyName || '').slice(0, 200),
+        industry: stripHtml(raw.industry || '').slice(0, 100),
+        country: stripHtml(raw.country || '').slice(0, 100),
+        city: stripHtml(raw.city || '').slice(0, 100),
+        companySize: stripHtml(raw.companySize || '').slice(0, 50),
+        contactName: stripHtml(raw.contactName || '').slice(0, 100),
+        contactTitle: stripHtml(raw.contactTitle || '').slice(0, 100),
+        email: isValidEmail(raw.email || '') ? raw.email : null,
+        website: isValidUrl(raw.website || '') ? raw.website : null,
+        score: typeof raw.score === 'number' && raw.score >= 0 && raw.score <= 100 ? raw.score : 50,
+        matchReason: stripHtml(raw.matchReason || '').slice(0, 500),
+        signals: Array.isArray(raw.signals) ? raw.signals.map(s => stripHtml(String(s)).slice(0, 200)) : [],
+      };
+
+      // 跳过公司名称为空的无效记录
+      if (!data.companyName) continue;
+
       const researchData: LeadResearchData = {
         score: data.score,
         scoreBreakdown: {
@@ -313,10 +363,10 @@ ${icp ? `
           signalStrength: Math.round(data.score * 0.3),
         },
         matchedICP: {
-          industries: icp?.targetIndustries.filter(i => 
+          industries: icp?.targetIndustries.filter(i =>
             data.industry.includes(i) || i.includes(data.industry)
           ) || [],
-          regions: icp?.targetRegions.filter(r => 
+          regions: icp?.targetRegions.filter(r =>
             data.country.includes(r) || data.city.includes(r)
           ) || [],
         },

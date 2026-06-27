@@ -465,7 +465,7 @@ ${JSON.stringify(allItems.slice(0, 15).map(item => ({
     query: RadarSearchQuery
   ): NormalizedCandidate {
     const sourceUrl = String(data.sourceUrl || data.link || '');
-    const externalId = `ai_${Date.now()}_${idx}_${this.hashUrl(sourceUrl)}`;
+    const externalId = `ai_${idx}_${this.hashUrl(sourceUrl)}`;
     
     return {
       externalId,

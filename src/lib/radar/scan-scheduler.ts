@@ -138,6 +138,7 @@ export async function runScheduledScans(): Promise<SchedulerResult> {
         const nextRunAt = computeNextRunAt(profile.scheduleRule);
         const existingStats = (profile.runStats as Record<string, number>) || {};
         const totalNew = profileResult.sources.reduce((sum, s) => sum + s.result.created, 0);
+        const completedAt = new Date();
 
         const releaseResult = await prisma.radarSearchProfile.updateMany({
           where: { id: profile.id, lockToken }, // 条款A: 条件释放
@@ -145,7 +146,7 @@ export async function runScheduledScans(): Promise<SchedulerResult> {
             lockToken: null,
             lockedAt: null,
             lockedBy: null,
-            lastRunAt: now,
+            lastRunAt: completedAt,
             nextRunAt,
             runStats: {
               totalRuns: ((existingStats.totalRuns as number) || 0) + 1,

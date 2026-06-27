@@ -188,10 +188,10 @@ export class GenericFeedAdapter implements RadarAdapter {
   normalize(raw: unknown): NormalizedCandidate {
     const item = raw as FeedItem;
     const mapping = this.fieldMapping;
-    
-    const externalId = String(item[mapping.externalId || 'guid'] || item[mapping.externalId || 'id'] || `feed_${Date.now()}_${Math.random().toString(36).slice(2)}`);
+
     const title = String(item[mapping.title || 'title'] || '');
     const link = String(item[mapping.link || 'link'] || '');
+    const externalId = String(item[mapping.externalId || 'guid'] || item[mapping.externalId || 'id'] || `feed_${(Math.abs((link || title).split('').reduce((h: number, c: string) => ((h << 5) - h) + c.charCodeAt(0), 0)) & 0x7fffffff).toString(36)}`);
     const description = String(item[mapping.description || 'description'] || '');
     const pubDate = item[mapping.pubDate || 'pubDate'] || item['published'];
     const deadlineStr = item[mapping.deadline || 'deadline'];

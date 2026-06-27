@@ -1068,9 +1068,9 @@ export async function enrichCandidateIntelligence(
               : candidate.address || null),
       description: allowCheckpointWriteback
         ? (
-            candidate.description ||
             googlePlacesEnrichResult?.description ||
             exaEnrichResult?.description ||
+            candidate.description ||
             null
           )
         : candidate.description || null,

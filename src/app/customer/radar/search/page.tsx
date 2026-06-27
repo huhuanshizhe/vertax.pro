@@ -1,9 +1,7 @@
 "use client";
 
-export const maxDuration = 60; // Vercel Hobby plan max
-
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   Briefcase,
@@ -143,6 +141,7 @@ export default function RadarSearchPage() {
   const [selectedKeywords, setSelectedKeywords] = useState<Set<string>>(new Set());
   const [comboMatrix, setComboMatrix] = useState<SearchComboMatrix | null>(null);
   const [searchProgress, setSearchProgress] = useState<{ current: number; total: number; currentCountry: string } | null>(null);
+  const countriesInitializedRef = useRef(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -176,11 +175,15 @@ export default function RadarSearchPage() {
       const specCountries = spec?.segmentation?.firmographic?.countries || [];
       const specKeywords = spec?.segmentation?.technographic?.keywords || [];
       
-      if (specCountries.length > 0 && selectedCountries.size === 0) {
-        setSelectedCountries(new Set(specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[]));
-      }
-      if (specKeywords.length > 0 && selectedKeywords.size === 0) {
-        setSelectedKeywords(new Set(specKeywords));
+      // 仅首次加载时从 targeting spec 初始化国家/关键词选择
+      if (!countriesInitializedRef.current) {
+        if (specCountries.length > 0) {
+          setSelectedCountries(new Set(specCountries.map((c: string) => normalizeCountryCode(c)).filter(Boolean) as string[]));
+        }
+        if (specKeywords.length > 0) {
+          setSelectedKeywords(new Set(specKeywords));
+        }
+        countriesInitializedRef.current = true;
       }
 
       if (specKeywords.length > 0 && specCountries.length > 0) {

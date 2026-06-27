@@ -10,7 +10,7 @@
  * D) Right: Secretary reminder panel 秘书提醒
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   Radar, 
   Search, 
@@ -72,6 +72,16 @@ export default function RadarPage() {
   const [pipelineStatus, setPipelineStatus] = useState<RadarPipelineStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pipelineLoaded, setPipelineLoaded] = useState(false);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // 清理定时器，防止组件卸载后回调
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+    };
+  }, []);
 
   // 客户专家判断输入
   const [showChatInput, setShowChatInput] = useState(false);
@@ -103,8 +113,8 @@ export default function RadarPage() {
           targetingSpec: data.targetingSpec,
         });
         setUserRequest('');
-        // 刷新状态
-        setTimeout(() => {
+        // 刷新状态（通过 ref 追踪定时器，组件卸载时自动清理）
+        refreshTimerRef.current = setTimeout(() => {
           loadPipelineStatus(true);
         }, 2000);
       } else {
@@ -131,7 +141,10 @@ export default function RadarPage() {
     
     setError(null);
     try {
-      const status = await getRadarPipelineStatus().catch(() => null);
+      const status = await getRadarPipelineStatus().catch((err) => {
+        console.warn('[RadarDashboard] getRadarPipelineStatus failed:', err);
+        return null;
+      });
       setPipelineStatus(status);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载状态失败');

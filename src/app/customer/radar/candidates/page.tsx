@@ -206,12 +206,9 @@ export default function RadarCandidatesPage() {
   const [pipelineStatus, setPipelineStatus] = useState<RadarPipelineStatus | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<CandidateWithSource | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  
+
   // 发送邮件状态
-  const [_isSendingEmail, setIsSendingEmail] = useState(false);
   const [manualEmail, setManualEmail] = useState('');
-  const [_emailSent, setEmailSent] = useState(false);
-  const [_emailError, setEmailError] = useState<string | null>(null);
 
   // 背调状态 - researchingId 绑定当前正在分析的公司ID，避免全局loading互相污染
   const [researchingId, setResearchingId] = useState<string | null>(null);
@@ -259,6 +256,15 @@ export default function RadarCandidatesPage() {
     search: '',
   });
 
+  // 搜索输入防抖：本地状态即时更新 UI，300ms 后才同步到 filters 触发数据重载
+  const [searchInput, setSearchInput] = useState(filters.search);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setFilters(prev => ({ ...prev, search: searchInput }));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
+
   // 可用国家列表
   const [availableCountries, setAvailableCountries] = useState<string[]>([]);
   useEffect(() => {
@@ -288,7 +294,10 @@ export default function RadarCandidatesPage() {
           limit: 100,
         }),
         getRadarStatsV2(),
-        getRadarPipelineStatus().catch(() => null),
+        getRadarPipelineStatus().catch((err) => {
+          console.warn('[RadarCandidates] getRadarPipelineStatus failed:', err);
+          return null;
+        }),
       ]);
       setCandidates(result.candidates);
       setTotal(result.total);
@@ -456,44 +465,6 @@ export default function RadarCandidatesPage() {
       setSelectedCandidate(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入失败');
-    }
-  };
-
-  // 发送Outreach邮件
-  const _handleSendEmail = async (candidate: CandidateWithSource) => {
-    const targetEmail = manualEmail || candidate.email;
-    if (!targetEmail) {
-      setEmailError('请输入邮箱地址');
-      return;
-    }
-
-    setIsSendingEmail(true);
-    setEmailError(null);
-
-    try {
-      const response = await fetch('/api/outreach/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          candidateId: candidate.id,
-          email: targetEmail,
-          language: 'en',
-        }),
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        setEmailSent(true);
-        setManualEmail('');
-        loadData(true);
-      } else {
-        setEmailError(result.error || result.details || '发送失败');
-      }
-    } catch (err) {
-      setEmailError(err instanceof Error ? err.message : '发送失败');
-    } finally {
-      setIsSendingEmail(false);
     }
   };
 
@@ -863,8 +834,8 @@ export default function RadarCandidatesPage() {
             <Search className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" size={12} />
             <input
               type="text"
-              value={filters.search}
-              onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
               placeholder="搜索公司名、行业..."
               className="w-[180px] rounded-md border border-[var(--ci-border)] bg-[var(--ci-surface-strong)] py-1 pl-7 pr-2 text-xs focus:outline-none focus:ring-1 focus:ring-[var(--ci-accent)]/30"
             />
@@ -873,10 +844,11 @@ export default function RadarCandidatesPage() {
           <button
             onClick={handleRefresh}
             disabled={isRefreshing}
+            aria-label="刷新数据"
             className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600 transition-colors disabled:opacity-50"
             title="刷新"
           >
-            <Filter size={14} className={isRefreshing ? 'animate-spin' : ''} />
+            <Filter size={14} className={isRefreshing ? 'animate-spin' : ''} aria-hidden />
           </button>
         </div>
       </div>
@@ -1028,7 +1000,7 @@ export default function RadarCandidatesPage() {
                       当前筛选条件下没有匹配结果，请尝试调整筛选条件
                     </p>
                     <button 
-                      onClick={() => setFilters({ status: '', qualifyTier: '', country: '', search: '' })}
+                      onClick={() => { setFilters({ status: '', qualifyTier: '', country: '', search: '' }); setSearchInput(''); }}
                       className="inline-flex items-center gap-2 px-4 py-2 bg-slate-100 text-slate-600 rounded-xl text-sm font-medium hover:bg-slate-200 transition-colors"
                     >
                       清除筛选
@@ -1055,8 +1027,6 @@ export default function RadarCandidatesPage() {
                       onClick={() => {
                         setSelectedCandidate(isSelected ? null : candidate);
                         // 重置邮件状态
-                        setEmailSent(false);
-                        setEmailError(null);
                         setManualEmail('');
                         // 背调状态由 useEffect cleanup (AbortController) 自动处理，无需手动重置
                         // 重置邮件序列状态
@@ -1791,7 +1761,7 @@ export default function RadarCandidatesPage() {
 
       {/* Exclusion Reason Modal (Task #125) */}
       {showExclusionModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" role="dialog" aria-modal="true" aria-label="排除原因">
           <div className="bg-white rounded-xl border border-[var(--ci-border)] w-full max-w-md overflow-hidden shadow-[var(--ci-shadow-soft)] animate-in zoom-in-95 duration-200">
             <div className="p-8">
               <div className="w-16 h-16 rounded-xl bg-red-50 flex items-center justify-center mb-6">

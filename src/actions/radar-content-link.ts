@@ -156,8 +156,8 @@ export async function findMatchingContent(
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
   const tenantId = session.user.tenantId;
 
-  const candidate = await prisma.radarCandidate.findUnique({
-    where: { id: candidateId },
+  const candidate = await prisma.radarCandidate.findFirst({
+    where: { id: candidateId, tenantId },
   });
   if (!candidate) throw new Error('Candidate not found');
 
@@ -219,8 +219,8 @@ export async function findMatchingCandidates(
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
   const tenantId = session.user.tenantId;
 
-  const content = await prisma.seoContent.findUnique({
-    where: { id: contentId },
+  const content = await prisma.seoContent.findFirst({
+    where: { id: contentId, tenantId },
     select: { keywords: true },
   });
   if (!content || content.keywords.length === 0) return [];
@@ -292,10 +292,19 @@ export async function createContentLink(input: {
 }): Promise<RadarContentLink> {
   const session = await auth();
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
+  const tenantId = session.user.tenantId;
+
+  // 验证 candidateId 和 contentId 属于当前租户
+  const [candidate, content] = await Promise.all([
+    prisma.radarCandidate.findFirst({ where: { id: input.candidateId, tenantId } }),
+    prisma.seoContent.findFirst({ where: { id: input.contentId, tenantId } }),
+  ]);
+  if (!candidate) throw new Error('Candidate not found');
+  if (!content) throw new Error('Content not found');
 
   const link = await prisma.radarContentLink.create({
     data: {
-      tenantId: session.user.tenantId,
+      tenantId,
       candidateId: input.candidateId,
       contentId: input.contentId,
       linkType: input.linkType,

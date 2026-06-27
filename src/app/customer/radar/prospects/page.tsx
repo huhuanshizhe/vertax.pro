@@ -444,6 +444,7 @@ export default function RadarProspectsPage() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [outreachPack, setOutreachPack] = useState<OutreachPackContent | null>(null);
   const outreachPackRef = useRef<OutreachPackContent | null>(null);
+  const contactsLoadedForRef = useRef<string | null>(null);
   const [selectedOutreachVersionId, setSelectedOutreachVersionId] = useState<string | null>(null);
   const [outreachVersions, setOutreachVersions] = useState<OutreachPackVersionSummary[]>([]);
   const [outreachTemplates, setOutreachTemplates] = useState<OutreachPackVersionSummary[]>([]);
@@ -586,11 +587,11 @@ export default function RadarProspectsPage() {
         link.click();
         document.body.removeChild(link);
       } else {
-        alert(res.error || '导出失败');
+        toast.error(res.error || '导出失败');
       }
     } catch (err) {
       console.error('Export failed:', err);
-      alert('导出出错，请检查网络或联系管理员');
+      toast.error('导出出错，请检查网络或联系管理员');
     } finally {
       setIsExporting(false);
     }
@@ -847,7 +848,10 @@ export default function RadarProspectsPage() {
           limit: PROSPECT_PAGE_SIZE,
           offset: (page - 1) * PROSPECT_PAGE_SIZE,
         }),
-        getOutreachRecords({ limit: 100, filter: outreachFilter }).catch(() => null),
+        getOutreachRecords({ limit: 100, filter: outreachFilter }).catch((err) => {
+          console.warn('[Prospects] getOutreachRecords failed:', err);
+          return null;
+        }),
       ]);
       const normalizedCompanies = companyResult.companies.map(normalizeProspectCompany);
       setCompanies(normalizedCompanies);
@@ -892,16 +896,21 @@ export default function RadarProspectsPage() {
 
   // 加载联系人（contacts / outreach tab 都需要）
   useEffect(() => {
-    if (!selectedCompanyId || (activeTab !== 'contacts' && activeTab !== 'outreach') || contacts.length > 0) {
+    if (!selectedCompanyId || (activeTab !== 'contacts' && activeTab !== 'outreach')) {
       return;
     }
+    // 如果已加载当前公司的联系人则跳过，否则重新加载
+    if (contactsLoadedForRef.current === selectedCompanyId && contacts.length > 0) {
+      return;
+    }
+    contactsLoadedForRef.current = selectedCompanyId;
 
     setIsLoadingContacts(true);
     getProspectContacts(selectedCompanyId)
       .then(setContacts)
       .catch(() => setContacts([]))
       .finally(() => setIsLoadingContacts(false));
-  }, [selectedCompanyId, activeTab, contacts.length]);
+  }, [selectedCompanyId, activeTab]);
 
   // 加载外联历史与营销内容建议 (Task #30 & P4)
   useEffect(() => {
@@ -938,7 +947,10 @@ export default function RadarProspectsPage() {
 
     getLatestProspectDossier(selectedCompanyId)
       .then(setDossierData)
-      .catch(() => setDossierData(null));
+      .catch((err) => {
+        console.warn('[Prospects] getLatestProspectDossier failed:', err);
+        setDossierData(null);
+      });
   }, [selectedCompanyId, activeTab]);
 
   // 加载已保存的外联包 (Task #130)
@@ -1032,6 +1044,7 @@ export default function RadarProspectsPage() {
   };
 
   const handleDeleteContact = async (contactId: string) => {
+    if (!window.confirm('确定要删除此联系人吗？此操作不可撤销。')) return;
     try {
       await deleteProspectContact(contactId);
       if (selectedCompany) {
@@ -1425,25 +1438,28 @@ export default function RadarProspectsPage() {
             <p className="mt-1 text-sm text-[var(--ci-muted)]">管理已导入的潜在客户，生成个性化外联方案</p>
           </div>
           <div className="ci-toolbar w-full justify-end sm:w-auto">
-            <button 
+            <button
               onClick={handleExport}
               disabled={isExporting}
+              aria-label="导出 CSV"
               title="导出 CSV"
               className={`rounded-md p-2 transition-colors ${isExporting ? 'cursor-not-allowed bg-slate-100 text-slate-400' : 'text-slate-500 hover:bg-white hover:text-[var(--ci-signal)]'}`}
             >
-              {isExporting ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+              {isExporting ? <Loader2 size={18} className="animate-spin" aria-hidden /> : <Download size={18} aria-hidden />}
             </button>
-            <button 
+            <button
               onClick={() => setShowFilters(!showFilters)}
+              aria-label={showFilters ? '隐藏筛选' : '显示筛选'}
               className={`rounded-md p-2 transition-colors ${showFilters ? 'bg-white text-[var(--ci-signal)] shadow-sm' : 'text-slate-500 hover:bg-white hover:text-[var(--ci-signal)]'}`}
             >
-              <Filter size={18} />
+              <Filter size={18} aria-hidden />
             </button>
-            <button 
+            <button
               onClick={loadData}
+              aria-label="刷新数据"
               className="rounded-md p-2 text-slate-500 transition-colors hover:bg-white hover:text-[var(--ci-signal)]"
             >
-              <RefreshCw size={18} />
+              <RefreshCw size={18} aria-hidden />
             </button>
           </div>
         </div>

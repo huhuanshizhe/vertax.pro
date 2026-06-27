@@ -239,7 +239,7 @@ export class SAMGovAdapter implements RadarAdapter {
       const samItems = results
         .filter(r => r.url.includes('sam.gov'))
         .map((r, idx) => ({
-          externalId: `sam_web_${Date.now()}_${idx}`,
+          externalId: `sam_web_${(Math.abs(String(r.url).split('').reduce((h: number, c: string) => ((h << 5) - h) + c.charCodeAt(0), 0)) & 0x7fffffff).toString(36)}_${idx}`,
           sourceUrl: r.url,
           displayName: r.title,
           candidateType: 'OPPORTUNITY' as const,
@@ -316,11 +316,6 @@ export class SAMGovAdapter implements RadarAdapter {
       categoryCode: opp.naicsCode,
       categoryName: opp.naicsDescription,
 
-      // 公司字段（如果已知中标者）
-      ...(opp.award?.awardee && {
-        displayName: opp.award.awardee.name,
-      }),
-
       // 联系方式
       phone: opp.pointOfContact?.[0]?.phone,
       email: opp.pointOfContact?.[0]?.email,
@@ -335,6 +330,7 @@ export class SAMGovAdapter implements RadarAdapter {
           `美国政府采购`,
           opp.naicsDescription ? `NAICS: ${opp.naicsDescription}` : undefined,
           opp.organizationType,
+          opp.award?.awardee?.name ? `中标方: ${opp.award.awardee.name}` : undefined,
         ].filter(Boolean) as string[],
         matchedKeywords: [opp.naicsCode].filter(Boolean) as string[],
       },

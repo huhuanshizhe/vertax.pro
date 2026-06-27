@@ -80,9 +80,9 @@ export async function updateLead(
     notes?: string;
   }
 ) {
-  await getSession();
+  const session = await getSession();
   const lead = await db.lead.update({
-    where: { id },
+    where: { id, tenantId: session.user.tenantId },
     data,
   });
   revalidatePath("/zh-CN/leads");

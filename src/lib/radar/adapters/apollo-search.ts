@@ -128,7 +128,7 @@ export class ApolloOrganizationSearchAdapter implements RadarAdapter {
       const data: ApolloOrgSearchResponse = await response.json();
       const orgs = data.organizations || [];
 
-      const items = orgs.map(org => this.normalizeOrg(org));
+      const items = orgs.map(org => this.normalizeOrg(org, query));
       const totalPages = data.pagination?.total_pages || 1;
       const hasMore = page < totalPages && page < 500;
 
@@ -216,8 +216,16 @@ export class ApolloOrganizationSearchAdapter implements RadarAdapter {
   /**
    * 将 Apollo Organization 转换为标准候选
    */
-  private normalizeOrg(org: ApolloOrganization): NormalizedCandidate {
+  private normalizeOrg(org: ApolloOrganization, query?: RadarSearchQuery): NormalizedCandidate {
     const website = org.website_url || (org.primary_domain ? `https://${org.primary_domain}` : undefined);
+
+    // 基于查询关键词计算实际匹配分数
+    const keywords = query?.keywords || [];
+    const searchText = `${org.name} ${org.industry || ''} ${org.short_description || ''} ${(org.keywords || []).join(' ')}`.toLowerCase();
+    const matchedCount = keywords.filter(kw => searchText.includes(kw.toLowerCase())).length;
+    const keywordScore = keywords.length > 0 ? matchedCount / keywords.length : 0.5;
+    const baseScore = 0.4; // Apollo 结构化数据基础分
+    const matchScore = Math.min(1, baseScore + keywordScore * 0.6);
 
     return {
       externalId: `apollo_org_${org.id}`,
@@ -233,7 +241,7 @@ export class ApolloOrganizationSearchAdapter implements RadarAdapter {
       companySize: employeeCountToLabel(org.estimated_num_employees),
       phone: org.primary_phone?.number,
 
-      matchScore: 0.7, // Apollo 结构化数据基础分
+      matchScore: Math.round(matchScore * 100) / 100,
 
       matchExplain: {
         channel: 'apollo_org_search',

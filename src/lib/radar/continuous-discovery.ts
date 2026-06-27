@@ -54,9 +54,14 @@ export interface ContinuousDiscoveryInstance {
 
 class ContinuousDiscoveryManager {
   private instances = new Map<string, ContinuousDiscoveryInstance>();
+  private static readonly MAX_CANDIDATES_PER_INSTANCE = 10000;
+  private static readonly MAX_COMPLETED_INSTANCES = 50;
 
   // 启动持续发现
   async start(profileId: string, config: ContinuousDiscoveryConfig): Promise<string> {
+    // 清理已完成的旧实例，防止内存泄漏
+    this.cleanupCompletedInstances();
+
     const instanceId = `continuous_${profileId}_${Date.now()}`;
 
     // 检查是否已有运行中的实例
@@ -159,6 +164,39 @@ class ContinuousDiscoveryManager {
       .map(([id]) => id);
   }
 
+  // ==================== 实例清理 ====================
+
+  /** 清理已完成且超过1小时的实例，保留数量上限 */
+  private cleanupCompletedInstances(): void {
+    const oneHourAgo = Date.now() - 3600000;
+    const completed: Array<{ id: string; startedAt: number }> = [];
+
+    for (const [id, inst] of this.instances) {
+      if (!inst.state.isRunning) {
+        completed.push({ id, startedAt: inst.state.startedAt.getTime() });
+      }
+    }
+
+    // 优先清理超过1小时的实例
+    for (const { id, startedAt } of completed) {
+      if (startedAt < oneHourAgo) {
+        this.instances.delete(id);
+      }
+    }
+
+    // 如果仍超过上限，按启动时间从早到晚继续清理
+    if (this.instances.size > ContinuousDiscoveryManager.MAX_COMPLETED_INSTANCES) {
+      const remaining = Array.from(this.instances.entries())
+        .filter(([, inst]) => !inst.state.isRunning)
+        .sort((a, b) => a[1].state.startedAt.getTime() - b[1].state.startedAt.getTime());
+
+      for (const [id] of remaining) {
+        if (this.instances.size <= ContinuousDiscoveryManager.MAX_COMPLETED_INSTANCES) break;
+        this.instances.delete(id);
+      }
+    }
+  }
+
   // ==================== 核心发现循环 ====================
 
   private async runDiscovery(
@@ -216,8 +254,15 @@ class ContinuousDiscoveryManager {
         state.uniqueFound += newCandidates.length;
         state.lastIterationAt = new Date();
 
-        // 添加到候选列表
-        instance.candidates.push(...newCandidates);
+        // 添加到候选列表（限制大小，防止内存泄漏）
+        const remaining = ContinuousDiscoveryManager.MAX_CANDIDATES_PER_INSTANCE - instance.candidates.length;
+        if (remaining > 0) {
+          instance.candidates.push(...newCandidates.slice(0, remaining));
+        }
+        if (instance.candidates.length >= ContinuousDiscoveryManager.MAX_CANDIDATES_PER_INSTANCE) {
+          console.log(`[ContinuousDiscovery] ${instanceId} reached max candidates limit, stopping`);
+          break;
+        }
 
         // 回调进度
         if (config.onProgress) {

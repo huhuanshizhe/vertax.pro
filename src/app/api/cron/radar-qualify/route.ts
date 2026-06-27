@@ -296,13 +296,13 @@ function stage1RuleFilter(
 
 // ==================== 评分配置加载 ====================
 
-let scoringProfileCache: { profile: ScoringProfile; tenantId: string; expiresAt: number } | null = null;
+// 按租户 ID 缓存评分配置，防止跨租户数据泄漏
+const scoringProfileCache = new Map<string, { profile: ScoringProfile; expiresAt: number }>();
 
 async function getScoringConfig(tenantId: string): Promise<ScoringProfile> {
-  if (scoringProfileCache &&
-      scoringProfileCache.tenantId === tenantId &&
-      scoringProfileCache.expiresAt > Date.now()) {
-    return scoringProfileCache.profile;
+  const cached = scoringProfileCache.get(tenantId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.profile;
   }
 
   try {
@@ -316,11 +316,10 @@ async function getScoringConfig(tenantId: string): Promise<ScoringProfile> {
       const criteria = segment.criteria as Record<string, unknown>;
       if (criteria.scoringProfile) {
         const profile = criteria.scoringProfile as ScoringProfile;
-        scoringProfileCache = {
+        scoringProfileCache.set(tenantId, {
           profile,
-          tenantId,
           expiresAt: Date.now() + 5 * 60 * 1000,
-        };
+        });
         return profile;
       }
     }

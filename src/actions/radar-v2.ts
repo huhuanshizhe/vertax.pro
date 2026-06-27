@@ -172,8 +172,10 @@ export async function getRadarSourcesV2(channelType?: ChannelType): Promise<Rada
  * 閼惧嘲褰囬崣顖滄暏閻ㄥ嫰鈧倿鍘ら崳銊ュ灙鐞?
  */
 export async function getAvailableAdaptersV2(channelType?: string) {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
   ensureAdaptersInitialized();
-  
+
   if (channelType) {
     return listAdaptersByChannel(channelType);
   }
@@ -184,6 +186,8 @@ export async function getAvailableAdaptersV2(channelType?: string) {
  * 閼惧嘲褰囬柅鍌炲帳閸ｃ劏顕涢幆?
  */
 export async function getAdapterInfoV2(code: string) {
+  const session = await auth();
+  if (!session?.user?.tenantId) throw new Error('Unauthorized');
   ensureAdaptersInitialized();
   return getAdapterRegistration(code);
 }
@@ -404,12 +408,11 @@ export async function createDiscoveryTaskV2(input: {
     specVersionId?: string;
   };
 }): Promise<RadarTask> {
-  // 妤犲矁鐦夋潏鎾冲弳
-  if (!input.sourceId) {
-    input.sourceId = (await getOrCreateAutoDiscoverySource()).id;
-  }
+  // 认证检查必须在所有 DB 操作之前
+  const session = await auth();
+  if (!session?.user?.tenantId || !session.user.id) throw new Error('Unauthorized');
 
-  // 妤犲矁鐦夐弻銉嚄闁板秶鐤?
+  // 验证查询条件
   const validatedQuery = validateRadarQuery(input.queryConfig);
   if (
     !validatedQuery.keywords?.length &&
@@ -422,9 +425,7 @@ export async function createDiscoveryTaskV2(input: {
     throw new ValidationError('At least one targeting condition is required');
   }
 
-  const session = await auth();
-  if (!session?.user?.tenantId || !session.user.id) throw new Error('Unauthorized');
-
+  // 确保 sourceId 存在（认证通过后再执行 DB 写入）
   if (!input.sourceId) {
     input.sourceId = (await getOrCreateAutoDiscoverySource()).id;
   }
@@ -746,18 +747,20 @@ export async function getCandidateCountries(): Promise<string[]> {
 
 /**
  * getCandidateV2
+ */
+export async function getCandidateV2(candidateId: string) {
   const session = await auth();
   if (!session?.user?.tenantId) throw new Error('Unauthorized');
-  
+
   const candidate = await prisma.radarCandidate.findUnique({
     where: { id: candidateId },
     include: { source: true, task: true },
   });
-  
+
   if (candidate && candidate.tenantId !== session.user.tenantId) {
     return null;
   }
-  
+
   return candidate;
 }
 

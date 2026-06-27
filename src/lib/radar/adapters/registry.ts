@@ -122,21 +122,37 @@ export function registerAdapter(
   adapterRegistrations.set(registration.code, registration);
 }
 
-// ==================== 获取适配器 ====================
+// ==================== 获取适配器（单例缓存） ====================
+
+const adapterInstances = new Map<string, RadarAdapter>();
 
 export function getAdapter(code: string, config?: AdapterConfig): RadarAdapter {
   const factory = adapterFactories.get(code);
   if (!factory) {
     throw new Error(`Adapter not found: ${code}`);
   }
-  
+
   const registration = adapterRegistrations.get(code);
   const mergedConfig = {
     ...registration?.defaultConfig,
     ...config,
   };
-  
-  return factory(mergedConfig);
+
+  // 使用 code + 序列化 config 作为缓存键，同一配置复用实例
+  // 这样 UNGM 等有 token 缓存的适配器不会因重复创建实例而失效
+  const cacheKey = `${code}:${JSON.stringify(mergedConfig, Object.keys(mergedConfig).sort())}`;
+  let instance = adapterInstances.get(cacheKey);
+  if (!instance) {
+    instance = factory(mergedConfig);
+    adapterInstances.set(cacheKey, instance);
+  }
+
+  return instance;
+}
+
+/** 清除适配器实例缓存（主要用于测试） */
+export function clearAdapterCache(): void {
+  adapterInstances.clear();
 }
 
 // ==================== 获取注册信息 ====================

@@ -277,18 +277,16 @@ export class UNGMAdapter implements RadarAdapter {
    * 从网页内容中提取公告ID
    */
   private extractNoticeIds(content: string): string[] {
-    const ids: string[] = [];
+    const seen = new Set<string>();
     // 匹配 UNGM 公告链接中的 ID
     const pattern = /\/Public\/Notice\/([a-zA-Z0-9]+)/g;
     let match;
 
     while ((match = pattern.exec(content)) !== null) {
-      if (!ids.includes(match[1])) {
-        ids.push(match[1]);
-      }
+      seen.add(match[1]);
     }
 
-    return ids;
+    return Array.from(seen);
   }
 
   async getDetails(externalId: string): Promise<CandidateDetails | null> {

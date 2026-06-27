@@ -221,26 +221,22 @@ export async function runIncrementalScan(
         }
       }
 
-      // 执行搜索
+      // 执行搜索（使用最新 cursor 状态构建查询）
       const queryWithCursor: RadarSearchQuery = {
-        keywords: [currentKeyword],
-        countries: [currentCountry],
-        regions: updatedProfile.targetRegions.length > 0 ? updatedProfile.targetRegions : undefined,
-        categories: updatedProfile.categoryFilters.length > 0 ? updatedProfile.categoryFilters : undefined,
-        targetIndustries: targetIndustries.length > 0 ? targetIndustries : undefined,
+        ...baseQuery,
         cursor: {
           nextPage: cursor.nextPage,
           nextPageToken: cursor.nextPageToken,
           since: cursor.since,
           queryIndex: cursor.queryIndex,
         },
-        maxResults: options.maxResults,
       };
 
       const result = await adapter.search(queryWithCursor);
       stats.fetched += result.items.length;
 
-      // 批量处理候选
+      // 批量收集并处理候选人（减少 N+1 数据库调用）
+      const batchItems: NormalizedCandidate[] = [];
       for (const item of result.items) {
         // 条款B: 过滤排除词
         if (negativeKeywords.length > 0) {
@@ -249,12 +245,34 @@ export async function runIncrementalScan(
             continue;
           }
         }
+        batchItems.push(item);
+      }
 
+      // 批量 upsert（每批最多 20 条，并行执行减少数据库往返）
+      const BATCH_SIZE = 20;
+      for (let i = 0; i < batchItems.length; i += BATCH_SIZE) {
+        const batch = batchItems.slice(i, i + BATCH_SIZE);
         try {
-          await processCandidate(updatedProfile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy, stats);
+          const results = await Promise.all(
+            batch.map(item => processCandidateUpsert(updatedProfile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy))
+          );
+          for (const r of results) {
+            if (r === 'created') stats.created++;
+            else stats.duplicates++;
+          }
         } catch (error) {
           const errMsg = error instanceof Error ? error.message : 'Unknown error';
-          stats.errors.push(`Candidate error: ${errMsg}`);
+          stats.errors.push(`Batch candidate error: ${errMsg}`);
+          // 降级为逐条处理，尽量保留数据
+          for (const item of batch) {
+            try {
+              const r = await processCandidateUpsert(updatedProfile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy);
+              if (r === 'created') stats.created++;
+              else stats.duplicates++;
+            } catch (e2) {
+              stats.errors.push(`Candidate error: ${e2 instanceof Error ? e2.message : 'Unknown'}`);
+            }
+          }
         }
       }
 
@@ -345,7 +363,8 @@ export async function runIncrementalScan(
 
 // ==================== 候选处理（upsert 去重） ====================
 
-async function processCandidate(
+/** 单条 upsert，返回 'created' | 'duplicate'（供批量事务使用） */
+async function processCandidateUpsert(
   tenantId: string,
   sourceId: string,
   taskId: string,
@@ -353,14 +372,12 @@ async function processCandidate(
   item: NormalizedCandidate,
   ttlDays: number,
   storagePolicy: string,
-  stats: { created: number; duplicates: number; errors: string[] }
-): Promise<void> {
+): Promise<'created' | 'duplicate'> {
   const expireAt = ttlDays
     ? new Date(Date.now() + ttlDays * 24 * 60 * 60 * 1000)
     : undefined;
 
-  // 条款B: upsert 避免竞态，使用 sourceId_externalId 复合键
-  // P1-3: externalId 为空时生成 fallback，防止 unique key 碰撞导致数据覆盖
+  // externalId 为空时生成 fallback，防止 unique key 碰撞导致数据覆盖
   if (!item.externalId) {
     const rawKey = (item.displayName + '::' + item.sourceUrl).toLowerCase().replace(/\s+/g, '-');
     const hash = Buffer.from(rawKey).toString('base64url').slice(0, 48);
@@ -421,12 +438,27 @@ async function processCandidate(
     },
   });
 
-  // 通过 createdAt 判断是新建还是已存在
-  const isNew = Date.now() - result.createdAt.getTime() < 5000;
-  if (isNew) {
-    stats.created++;
-  } else {
-    stats.duplicates++;
+  // 通过 createdAt 与 updatedAt 比较判断是新建还是已存在
+  return result.createdAt.getTime() === result.updatedAt.getTime() ? 'created' : 'duplicate';
+}
+
+/** 兼容旧调用（单条处理，含 stats 更新） */
+async function processCandidate(
+  tenantId: string,
+  sourceId: string,
+  taskId: string,
+  profileId: string,
+  item: NormalizedCandidate,
+  ttlDays: number,
+  storagePolicy: string,
+  stats: { created: number; duplicates: number; errors: string[] }
+): Promise<void> {
+  try {
+    const result = await processCandidateUpsert(tenantId, sourceId, taskId, profileId, item, ttlDays, storagePolicy);
+    if (result === 'created') stats.created++;
+    else stats.duplicates++;
+  } catch (error) {
+    stats.errors.push(`Candidate error: ${error instanceof Error ? error.message : 'Unknown'}`);
   }
 }
 

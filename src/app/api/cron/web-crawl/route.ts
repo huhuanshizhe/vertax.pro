@@ -227,6 +227,7 @@ async function processCrawlTask(task: {
       // Incremental discovery: fetch raw HTML for link extraction
       // Must fetch raw HTML because fetchWebContent's first priority (Jina) returns Markdown,
       // and cheerio cannot extract <a href> links from Markdown
+      // Also, fetchWebContent's scrape fallback returns only body content (not full HTML)
       const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
       let rawHtmlForLinks = "";
       if (isIncremental) {
@@ -236,7 +237,7 @@ async function processCrawlTask(task: {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
               Accept: "text/html,application/xhtml+xml",
             },
-            signal: AbortSignal.timeout(15_000),
+            signal: AbortSignal.timeout(30_000),
           });
           if (rawRes.ok) {
             const ct = rawRes.headers.get("content-type") || "";
@@ -245,7 +246,7 @@ async function processCrawlTask(task: {
             }
           }
         } catch {
-          // raw HTML fetch failed — will try scraped.html fallback below
+          // raw HTML fetch failed — will retry below if needed
         }
       }
 
@@ -262,8 +263,24 @@ async function processCrawlTask(task: {
           const maxPages = (taskMetadata.maxPagesRequested as number) || 500;
           const rootHostname = new URL(task.rootUrl).hostname;
 
-          // Prefer raw fetch HTML, fallback to scraped.html
-          const htmlForLinks = rawHtmlForLinks || scraped.html || "";
+          // Prefer raw fetch HTML; if empty, retry fetch specifically for links
+          let htmlForLinks = rawHtmlForLinks;
+          if (!htmlForLinks) {
+            try {
+              const retryRes = await fetch(pageUrl, {
+                headers: {
+                  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                  Accept: "text/html,application/xhtml+xml",
+                },
+                signal: AbortSignal.timeout(30_000),
+              });
+              if (retryRes.ok) {
+                htmlForLinks = await retryRes.text();
+              }
+            } catch {
+              // Second attempt also failed
+            }
+          }
           const newLinks = extractLinksFromHtml(htmlForLinks, pageUrl, rootHostname);
 
           // Dedup + language prefix filter
