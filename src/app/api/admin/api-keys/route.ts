@@ -3,6 +3,27 @@ import { auth } from "@/lib/auth";
 import { isPlatformAdminRoleName } from "@/lib/permissions";
 import { prisma } from "@/lib/prisma";
 
+// 与 api-key-resolver.ts 保持一致的 env var 映射
+const ENV_KEY_MAP: Record<string, string> = {
+  dashscope: "TEXT_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  gemini: "GEMINI_API_KEY",
+  brave_search: "BRAVE_SEARCH_API_KEY",
+  tavily: "TAVILY_API_KEY",
+  exa: "EXA_API_KEY",
+  firecrawl: "FIRECRAWL_API_KEY",
+  serper: "SERPER_API_KEY",
+  serpapi: "SERPAPI_API_KEY",
+  google_places: "GOOGLE_MAPS_API_KEY",
+  hunter: "HUNTER_API_KEY",
+  pdl: "PDL_API_KEY",
+  apollo: "APOLLO_API_KEY",
+  skrapp: "SKRAPP_API_KEY",
+  sam_gov: "SAM_GOV_API_KEY",
+  ungm: "UNGM_CLIENT_ID",
+  resend: "RESEND_API_KEY",
+};
+
 async function getPlatformAdminUser(userId?: string) {
   if (!userId) return null;
 
@@ -30,17 +51,71 @@ export async function GET() {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const configs = await prisma.apiKeyConfig.findMany({
+    // 从 DB 读取已保存的配置
+    const dbConfigs = await prisma.apiKeyConfig.findMany({
       orderBy: [{ category: "asc" }, { service: "asc" }],
     });
 
-    const safeConfigs = configs.map((config) => ({
-      ...config,
-      apiKey: config.apiKey ? "************" : null,
-      apiSecret: config.apiSecret ? "************" : null,
-    }));
+    const dbConfigMap = new Map(dbConfigs.map(c => [c.service, c]));
 
-    return NextResponse.json({ configs: safeConfigs });
+    // 合并 env 变量中的 key（DB 优先，env 作为 fallback）
+    const allServices = Object.keys(ENV_KEY_MAP);
+    const mergedConfigs = allServices.map((service) => {
+      const dbConfig = dbConfigMap.get(service);
+      const envVar = ENV_KEY_MAP[service];
+      const hasEnvKey = Boolean(process.env[envVar]?.trim());
+      const hasDbKey = Boolean(dbConfig?.apiKey?.trim());
+
+      if (dbConfig) {
+        // DB 有记录 → 返回 DB 数据（key 脱敏）
+        return {
+          ...dbConfig,
+          apiKey: dbConfig.apiKey ? "************" : null,
+          apiSecret: dbConfig.apiSecret ? "************" : null,
+          source: "database" as const,
+        };
+      }
+
+      if (hasEnvKey) {
+        // DB 无记录但 env 有 → 返回 env 状态
+        return {
+          id: `env-${service}`,
+          service,
+          category: getCategoryForService(service),
+          apiKey: "************", // env key 也脱敏显示
+          apiSecret: null,
+          isEnabled: true,
+          lastUsedAt: null,
+          monthlyLimit: null,
+          currentUsage: 0,
+          usageResetAt: null,
+          notes: `通过环境变量 ${envVar} 配置`,
+          source: "env" as const,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+      }
+
+      // 都没有 → 未配置
+      return {
+        id: `none-${service}`,
+        service,
+        category: getCategoryForService(service),
+        apiKey: null,
+        apiSecret: null,
+        isEnabled: false,
+        lastUsedAt: null,
+        monthlyLimit: null,
+        currentUsage: 0,
+        usageResetAt: null,
+        notes: null,
+        source: "none" as const,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    return NextResponse.json({ configs: mergedConfigs });
   } catch (error) {
     console.error("Failed to fetch API key configs:", error);
     return NextResponse.json(
@@ -48,6 +123,29 @@ export async function GET() {
       { status: 500 }
     );
   }
+}
+
+function getCategoryForService(service: string): string {
+  const categories: Record<string, string> = {
+    dashscope: "AI Provider",
+    openrouter: "AI Provider",
+    gemini: "AI Provider",
+    brave_search: "Search API",
+    tavily: "Search API",
+    exa: "Search API",
+    serper: "Search API",
+    serpapi: "Search API",
+    firecrawl: "Web Scraping",
+    google_places: "Business Data",
+    hunter: "Business Data",
+    pdl: "Business Data",
+    apollo: "Business Data",
+    skrapp: "Business Data",
+    sam_gov: "Government Procurement",
+    ungm: "Government Procurement",
+    resend: "Email",
+  };
+  return categories[service] || "Other";
 }
 
 export async function POST(request: NextRequest) {

@@ -165,6 +165,7 @@ interface ApiKeyConfig {
   currentUsage: number;
   usageResetAt: string | null;
   notes: string | null;
+  source?: "database" | "env" | "none";
 }
 
 // ==================== Main Component ====================
@@ -289,7 +290,7 @@ export default function TowerApiKeysPage() {
                         {isConfigured ? (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-600">
                             <Check className="h-2.5 w-2.5" />
-                            已配置
+                            {config?.source === "env" ? "环境变量" : "已配置"}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-gray-100 text-gray-500">
@@ -298,14 +299,12 @@ export default function TowerApiKeysPage() {
                           </span>
                         )}
                       </div>
-                      {config && (
-                        <Switch
-                          checked={config.isEnabled}
-                          onCheckedChange={(checked) =>
-                            toggleEnabled(sc.service, checked)
-                          }
-                        />
-                      )}
+                      <Switch
+                        checked={config?.isEnabled ?? false}
+                        onCheckedChange={(checked) =>
+                          toggleEnabled(sc.service, checked)
+                        }
+                      />
                     </div>
                     <p className="text-xs text-gray-400 mt-1">
                       {sc.description}
