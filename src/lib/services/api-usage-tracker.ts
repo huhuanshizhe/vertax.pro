@@ -3,6 +3,7 @@
 // 使用 Prisma 已有的 KeyValue 存储（或 fallback 到内存）
 
 import { prisma } from '@/lib/prisma';
+import { resolveApiKey } from '@/lib/services/api-key-resolver';
 
 // ==================== API 注册表 ====================
 
@@ -12,6 +13,8 @@ export interface ApiRegistryEntry {
   category: 'search' | 'enrichment' | 'ai' | 'scraping' | 'tender' | 'email';
   provider: string;
   envVar: string;
+  /** resolveApiKey 对应的 service 名称（用于查 DB） */
+  resolverService?: string;
   /** 每月免费额度（0 = 无免费额度 / 未知） */
   monthlyFreeQuota: number;
   /** 付费额度上限（0 = 无上限 / 未知） */
@@ -29,6 +32,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'ai',
     provider: 'Alibaba Cloud',
     envVar: 'TEXT_API_KEY',
+    resolverService: 'dashscope',
     monthlyFreeQuota: 0,
     monthlyPaidQuota: 0, // Coding Plan 订阅制
     isFree: false,
@@ -39,6 +43,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'ai',
     provider: 'OpenRouter',
     envVar: 'OPENROUTER_API_KEY',
+    resolverService: 'openrouter',
     monthlyFreeQuota: 0,
     monthlyPaidQuota: 0,
     isFree: false,
@@ -51,6 +56,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'search',
     provider: 'Exa Labs',
     envVar: 'EXA_API_KEY',
+    resolverService: 'exa',
     monthlyFreeQuota: 0,
     monthlyPaidQuota: 0,
     estimatedCostPerCall: 0.002,
@@ -62,6 +68,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'search',
     provider: 'Tavily',
     envVar: 'TAVILY_API_KEY',
+    resolverService: 'tavily',
     monthlyFreeQuota: 1000,
     monthlyPaidQuota: 0,
     estimatedCostPerCall: 0.003,
@@ -96,6 +103,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'email',
     provider: 'Hunter.io',
     envVar: 'HUNTER_API_KEY',
+    resolverService: 'hunter',
     monthlyFreeQuota: 25,
     monthlyPaidQuota: 0,
     estimatedCostPerCall: 0.04,
@@ -107,6 +115,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'enrichment',
     provider: 'Apollo.io',
     envVar: 'APOLLO_API_KEY',
+    resolverService: 'apollo',
     monthlyFreeQuota: 0,
     monthlyPaidQuota: 0,
     isFree: false,
@@ -117,6 +126,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'search',
     provider: 'Google Cloud',
     envVar: 'GOOGLE_MAPS_API_KEY',
+    resolverService: 'google_places',
     monthlyFreeQuota: 0, // $200 月免费额度
     monthlyPaidQuota: 0,
     estimatedCostPerCall: 0.017,
@@ -130,6 +140,7 @@ export const API_REGISTRY: ApiRegistryEntry[] = [
     category: 'scraping',
     provider: 'Firecrawl',
     envVar: 'FIRECRAWL_API_KEY',
+    resolverService: 'firecrawl',
     monthlyFreeQuota: 500,
     monthlyPaidQuota: 0,
     estimatedCostPerCall: 0.001,
@@ -312,16 +323,33 @@ export interface ApiHealthStatus {
 }
 
 /**
- * 获取所有 API 的健康状态
+ * 获取所有 API 的健康状态（async — 同时检查 env 和 DB）
  */
-export function getAllApiHealth(): ApiHealthStatus[] {
+export async function getAllApiHealth(): Promise<ApiHealthStatus[]> {
   const todayUsage = getTodayUsage();
 
-  return API_REGISTRY.map((entry) => {
+  // 并行检查所有 API key 是否已配置（env + DB）
+  const configChecks = await Promise.all(
+    API_REGISTRY.map(async (entry) => {
+      // 免费 API 无需 key
+      if (!entry.envVar && !entry.resolverService) return true;
+
+      // 1. 先查 process.env
+      if (entry.envVar && process.env[entry.envVar]?.trim()) return true;
+
+      // 2. 再查 resolveApiKey（会检查 DB 的 ApiKeyConfig 表）
+      if (entry.resolverService) {
+        const resolved = await resolveApiKey(entry.resolverService);
+        if (resolved) return true;
+      }
+
+      return false;
+    })
+  );
+
+  return API_REGISTRY.map((entry, idx) => {
     const usage = todayUsage.get(getCacheKey(entry.code));
-    const isConfigured = entry.envVar
-      ? Boolean(process.env[entry.envVar])
-      : true; // 免费 API 视为已配置
+    const isConfigured = configChecks[idx];
 
     // 用量 vs 额度检查
     let quotaStatus: 'healthy' | 'warning' | 'exhausted' | 'unknown' = 'unknown';

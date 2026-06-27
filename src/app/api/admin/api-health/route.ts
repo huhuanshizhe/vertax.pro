@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
 
   await ensureInit();
 
-  const health = getAllApiHealth();
+  const health = await getAllApiHealth();
 
   // 汇总统计
   const totalCallsToday = health.reduce((sum, h) => sum + h.todayUsage.calls, 0);
