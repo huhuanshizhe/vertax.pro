@@ -4,7 +4,7 @@ import { db } from "@/lib/db";
 import { discoverPages, normalizeUrl, detectLanguagePrefix, matchesLanguagePrefix } from "@/lib/services/site-crawler";
 import crypto from "crypto";
 
-export const maxDuration = 60; // 1 minute - return quickly after queueing task
+export const maxDuration = 300; // 5 minutes - wait for first batch to complete
 
 /**
  * Web Import API - 双模式
@@ -114,7 +114,7 @@ export async function POST(req: NextRequest) {
         },
       });
 
-      triggerCrawlProcessing(req, crawlTask.id);
+      await triggerCrawlProcessing(req, crawlTask.id);
 
       return new Response(JSON.stringify({
         success: true,
@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    triggerCrawlProcessing(req, crawlTask.id);
+    await triggerCrawlProcessing(req, crawlTask.id);
 
     return new Response(JSON.stringify({
       success: true,
@@ -185,9 +185,9 @@ export async function POST(req: NextRequest) {
 }
 
 /**
- * 触发后台爬取处理（fire-and-forget）
+ * 触发后台爬取处理（同步等待第一批完成）
  */
-function triggerCrawlProcessing(req: NextRequest, taskId: string) {
+async function triggerCrawlProcessing(req: NextRequest, taskId: string) {
   const host = req.headers.get("host") ||
     process.env.VERCEL_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
@@ -195,14 +195,20 @@ function triggerCrawlProcessing(req: NextRequest, taskId: string) {
   const proto = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
   const cronUrl = `${proto}://${host}/api/cron/web-crawl`;
 
-  fetch(cronUrl, {
+  const res = await fetch(cronUrl, {
     method: "GET",
     headers: {
       "Authorization": `Bearer ${process.env.CRON_SECRET || "dev-secret"}`,
     },
-  }).catch((err) => {
-    console.warn(`[web-import] Failed to trigger immediate processing for task ${taskId}:`, err);
   });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.warn(`[web-import] Cron trigger failed for task ${taskId}: ${res.status} ${body}`);
+  } else {
+    const data = await res.json().catch(() => ({}));
+    console.log(`[web-import] Cron processed task ${taskId}:`, data);
+  }
 }
 
 /**
