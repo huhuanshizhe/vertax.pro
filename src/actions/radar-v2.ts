@@ -809,27 +809,9 @@ export async function qualifyCandidateV2(
 
   // 閹烘帡娅庨弮璺虹磽濮濄儴袝閸欐埊绱拌箛顐︹偓鐔活唶瑜版洖鍙曢崣绋挎倳 + AI 濡€崇础閹绘劗鍋?
   if (tier === 'excluded') {
-    const tenantId = session.user.tenantId;
-    void (async () => {
-      try {
-        const { appendExcludedCompany, learnExclusionPattern } = await import(
-          '@/lib/radar/exclusion-learner'
-        );
-        // 1. 缁斿宓嗛幎濠傚彆閸欑鎮曟潻钘夊閸?excludedCompanies
-        if (candidate.profileId) {
-          await appendExcludedCompany(candidate.profileId, candidate.displayName);
-        }
-        // 2. 濮?5 濞嗏剝甯撻梽銈埿曢崣鎴滅濞?AI 濡€崇础閹绘劗鍋ч敍鍫ｅΝ閻?token閿?
-        const excludedCount = await prisma.radarCandidate.count({
-          where: { tenantId, status: 'EXCLUDED' },
-        });
-        if (excludedCount % 5 === 0 && candidate.profileId) {
-          await learnExclusionPattern(tenantId, candidate.profileId);
-        }
-      } catch {
-        // 闂堟瑩绮径杈Е
-      }
-    })();
+    // 排除反馈回路已关闭：用户手动排除仍生效，但不再自动学习排除模式
+    // 设计理念：所有候选都有可能是潜在客户，不因个别排除而影响后续搜索
+    console.log(`[Radar] User excluded candidate: ${candidate.displayName}`);
   }
 
   return updated;

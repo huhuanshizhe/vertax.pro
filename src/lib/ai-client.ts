@@ -24,6 +24,7 @@ import { spawn } from "node:child_process";
 import { writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { trackApiCall } from "@/lib/services/api-usage-tracker";
 
 const DEFAULT_BASE_URL =
   "https://coding.dashscope.aliyuncs.com/v1/chat/completions";
@@ -365,6 +366,7 @@ export async function chatCompletion(
 ): Promise<ChatCompletionResponse> {
   const apiKey = getApiKey();
   const baseUrl = getBaseUrl();
+  const ts = Date.now();
 
   if (!apiKey) {
     throw new Error("TEXT_API_KEY is not configured");
@@ -375,21 +377,39 @@ export async function chatCompletion(
   const resolvedOptions = { ...options, model };
 
   try {
+    let result: ChatCompletionResponse;
     if (process.env.VERCEL) {
-      return await chatCompletionViaFetch(apiKey, baseUrl, messages, resolvedOptions);
+      result = await chatCompletionViaFetch(apiKey, baseUrl, messages, resolvedOptions);
+    } else {
+      result = await chatCompletionViaCurl(apiKey, baseUrl, messages, resolvedOptions);
     }
-    return await chatCompletionViaCurl(apiKey, baseUrl, messages, resolvedOptions);
+    trackApiCall('dashscope', { success: true, latencyMs: Date.now() - ts });
+    return result;
   } catch (primaryError) {
+    trackApiCall('dashscope', {
+      success: false,
+      latencyMs: Date.now() - ts,
+      error: primaryError instanceof Error ? primaryError.message : String(primaryError),
+    });
+
     const errMsg = primaryError instanceof Error ? primaryError.message : String(primaryError);
     console.warn(`[chatCompletion] Coding Plan failed: ${errMsg.slice(0, 200)}`);
 
     // 尝试 OpenRouter 备用
     if (isOpenRouterAvailable()) {
       console.log(`[chatCompletion] Falling back to OpenRouter (${getOpenRouterModel()})...`);
+      const fbTs = Date.now();
       try {
         const fallbackOptions = { ...resolvedOptions, model: getOpenRouterModel() };
-        return await chatCompletionViaOpenRouter(messages, fallbackOptions);
+        const result = await chatCompletionViaOpenRouter(messages, fallbackOptions);
+        trackApiCall('openrouter', { success: true, latencyMs: Date.now() - fbTs });
+        return result;
       } catch (fallbackError) {
+        trackApiCall('openrouter', {
+          success: false,
+          latencyMs: Date.now() - fbTs,
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError),
+        });
         const fbMsg = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
         console.error(`[chatCompletion] OpenRouter fallback also failed: ${fbMsg.slice(0, 200)}`);
         // 两个都失败，抛出原始错误

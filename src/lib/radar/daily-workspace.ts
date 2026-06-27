@@ -6,6 +6,8 @@ import {
   mergeProspectContactsWithSnapshot,
   type ProspectOutreachContact,
 } from './prospect-outreach-state';
+import { getChannelAdaptation } from './country-channel-adaptation';
+import { getSeasonalAdvice } from './seasonal-awareness';
 
 const RADAR_TIMEZONE = 'Asia/Shanghai';
 const RADAR_UTC_OFFSET = '+08:00';
@@ -669,7 +671,16 @@ function buildWorkspaceItem(
 
   const contacts = mergeProspectContactsWithSnapshot(company, company.contacts);
   const contactProfile = getProspectCompanyOutreachContactProfile(company);
-  const preferredChannelType = contactProfile.recommendedContact?.type ?? null;
+
+  // 根据国家自动调整首选渠道（渠道适配）
+  const countryAdaptation = getChannelAdaptation(company.country);
+  const countryPreferredChannel = countryAdaptation.preferredChannels[0] || null;
+
+  const preferredChannelType = contactProfile.recommendedContact?.type
+    ?? (countryPreferredChannel === 'zalo' || countryPreferredChannel === 'line' || countryPreferredChannel === 'wechat' || countryPreferredChannel === 'kakao'
+      ? 'whatsapp' // 将这些渠道映射为 whatsapp 类型（现有系统只识别 phone/email/linkedin/form）
+      : countryPreferredChannel)
+    ?? null;
   const preferredPhoneValue = preferredChannelType === 'phone'
     ? contactProfile.recommendedContact?.value
     : undefined;
@@ -704,6 +715,10 @@ function buildWorkspaceItem(
               ? 'email'
               : 'research';
 
+  // 季节性优先级调整
+  const seasonalAdvice = getSeasonalAdvice(company.industry);
+  const seasonalBoost = seasonalAdvice.searchPriorityBoost / 5; // 缩放到合理范围
+
   const companyBaseScore =
     getTierBoost(company.tier) +
     getFreshnessBoost(company.createdAt) +
@@ -711,7 +726,8 @@ function buildWorkspaceItem(
     (hasOutreachPack ? 6 : 0) +
     (company.status === 'contacted' ? -10 : 0) +
     (company.lastContactedAt ? -6 : 0) +
-    (feedback?.companyScoreAdjustment || 0);
+    (feedback?.companyScoreAdjustment || 0) +
+    seasonalBoost;
 
   const contactScore = recommendedContact
     ? Math.max(

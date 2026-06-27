@@ -52,6 +52,20 @@ model Tenant {
   prospectCompanies   ProspectCompany[]
   importBatches       ImportBatch[]
   radarDailySnapshots RadarDailySnapshot[]
+  // Radar relations
+  radarTasks          RadarTask[]
+  radarCandidates     RadarCandidate[]
+  prospectContacts    ProspectContact[]
+  opportunities       Opportunity[]
+  radarSearchProfiles RadarSearchProfile[]
+  intentSignals       IntentSignal[]
+  webhookConfigs      WebhookConfig[]
+  webhookLogs         WebhookLog[]
+  outreachRecords     OutreachRecord[]
+  sequenceInstances   SequenceInstance[]
+  radarErrors         RadarError[]
+  radarContentLinks   RadarContentLink[]
+  inquiries           Inquiry[]
   // Web crawl queue
   crawlQueues         CrawlQueue[]
   // Asset processing queue
@@ -1022,6 +1036,7 @@ model RadarSource {
 model RadarTask {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 任务配置
   name     String?
@@ -1053,6 +1068,8 @@ model RadarTask {
   candidates RadarCandidate[]
 
   createdAt DateTime @default(now())
+
+  @@index([tenantId, status])
 }
 
 // ==================== 统一候选池 ====================
@@ -1060,6 +1077,7 @@ model RadarTask {
 model RadarCandidate {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 来源杩芥函锛堝繀椤伙級
   sourceId String
@@ -1140,9 +1158,11 @@ model RadarCandidate {
   contentLinks RadarContentLink[] // 获客雷达内容联动
 
   @@unique([sourceId, externalId])
+  @@index([tenantId, status])
+  @@index([tenantId, candidateType])
+  @@index([tenantId, qualifyTier])
+  @@index([country, status])
 }
-
-// ==================== 正式线索公司 ====================
 
 model ProspectCompany {
   id       String @id @default(cuid())
@@ -1166,7 +1186,7 @@ model ProspectCompany {
 
   enrichmentStatus  String? // pending | in_progress | completed | failed
   lastEnrichedAt    DateTime?
-  tenant            Tenant    @relation(fields: [tenantId], references: [id])
+  tenant            Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   outreachArtifacts Json? // 持久化外联方案 { email: { subject, body }, whatsapp: { message }, ... }
   outreachLanguage  String? // Validated BCP-47 override (vi, th, zh-Hans...). Null = auto-infer from country/TLD.
 
@@ -1193,6 +1213,7 @@ model ProspectCompany {
   // 关系
   contacts      ProspectContact[]
   opportunities Opportunity[]
+  inquiries     Inquiry[]
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -1206,6 +1227,7 @@ model ProspectCompany {
 model ProspectContact {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 关联公司
   companyId String?
@@ -1294,6 +1316,7 @@ model ImportBatchItem {
 model Opportunity {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 关联公司
   companyId String?
@@ -1340,6 +1363,7 @@ model Opportunity {
 model RadarSearchProfile {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   name        String
   description String?
@@ -1418,6 +1442,7 @@ model RadarScanCursor {
 model IntentSignal {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 关联实体
   candidateId String? // 关联 RadarCandidate
@@ -1450,6 +1475,7 @@ model IntentSignal {
 model WebhookConfig {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // Webhook配置
   name     String
@@ -1480,6 +1506,7 @@ model WebhookConfig {
 model WebhookLog {
   id        String @id @default(cuid())
   tenantId  String
+  tenant    Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   webhookId String
 
   // 触发事件
@@ -1591,6 +1618,7 @@ model AttachmentTemplate {
 model OutreachRecord {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 关联候选
   candidateId String?
@@ -1637,6 +1665,7 @@ model OutreachRecord {
 model SequenceInstance {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 序列信息
   sequenceName   String
@@ -1676,6 +1705,7 @@ model SequenceInstance {
 model RadarError {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 错误来源
   adapter   String // ted, ungm, brave, hunter, etc.
@@ -1706,6 +1736,7 @@ enum ContentLinkType {
 model RadarContentLink {
   id       String @id @default(cuid())
   tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   // 双向关联
   candidateId String
@@ -1911,7 +1942,7 @@ model AssetProcessQueue {
 }
 
 // 商务咨询留言（来自登录页"获取使用资格"入口）
-model Inquiry {
+model AccessInquiry {
   id        String   @id @default(cuid())
   name      String
   company   String
@@ -1975,4 +2006,63 @@ model SocialKeywordSet {
   updatedAt DateTime @updatedAt
 
   @@map("social_keyword_sets")
+}
+
+// ==================== RFQ 询盘管理 ====================
+
+model Inquiry {
+  id       String @id @default(cuid())
+  tenantId String
+  tenant   Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  // 询盘来源
+  source       String // email / alibaba / trade_show / website_form / whatsapp / phone / manual
+  sourceDetail String? // 来源详情（邮件地址、展会名称、平台链接等）
+
+  // 客户信息（从询盘中提取）
+  companyName   String?
+  contactName   String?
+  contactEmail  String?
+  contactPhone  String?
+  country       String?
+  website       String?
+
+  // 询盘内容
+  subject       String
+  bodyText      String?
+  productInterest String? // 感兴趣的产品/品类
+  quantity      String? // 需求数量
+  targetPrice   String? // 目标价格
+  deadline      DateTime? // 报价截止日期
+
+  // 匹配状态
+  matchedCompanyId String? // 匹配到线索库中的公司
+  matchedCandidateId String? // 匹配到候选池中的候选
+
+  // 跟进状态
+  status     String @default("new") // new / reading / quoting / quoted / sampling / ordered / closed_won / closed_lost
+  priority   String @default("medium") // high / medium / low
+  assignedTo String?
+
+  // 报价关联
+  quoteSentAt      DateTime?
+  quoteAmount      Float?
+  quoteCurrency    String?
+
+  // 时间追踪
+  receivedAt  DateTime @default(now())
+  firstReplyAt DateTime?
+  closedAt    DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // 关联
+  company   ProspectCompany? @relation(fields: [matchedCompanyId], references: [id], onDelete: SetNull)
+  notes     String?
+  metadata  Json? // 原始询盘数据快照
+
+  @@index([tenantId, status])
+  @@index([tenantId, receivedAt])
+  @@index([matchedCompanyId])
+  @@map("rfq_inquiries")
 }

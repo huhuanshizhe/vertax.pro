@@ -52,20 +52,22 @@ const CRAWL_MAX_PAGES = 80;
 const DEFAULT_OPTIONS: CrawlOptions = {
   maxPages: 500,
   excludePaths: [
-    "/admin", "/login", "/cart", "/checkout", "/account", "/wp-admin", "/api",
-    "/privacy", "/terms", "/cookie", "/legal", "/gdpr", "/sitemap", "/feed",
-    "/rss", "/tag/", "/tags/", "/author/", "/wp-content", "/cdn-cgi",
-    "/unsubscribe", "/imprint", "/disclaimer",
-    // 电商相关
-    "/product/", "/products/", "/category/", "/categories/", "/collection/", "/collections/",
-    "/item/", "/shop/", "/store/", "/mall/", "/marketplace/",
-    // 用户生成内容
-    "/forum/", "/forums/", "/thread/", "/threads/", "/post/", "/posts/",
-    "/comment/", "/comments/", "/review/", "/reviews/", "/question/", "/answer/",
-    // 媒体/下载
-    "/media/", "/downloads/", "/download/", "/files/", "/file/",
-    // 搜索/过滤
-    "/search", "/?s=", "/?q=", "/filter", "/sort",
+    // 后台/管理/账户（必排）
+    "/admin", "/login", "/wp-admin", "/wp-login", "/dashboard", "/cpanel",
+    "/account", "/my-account", "/signin", "/signup", "/register",
+    // 法律/合规页面（内容少、无价值）
+    "/privacy", "/terms", "/cookie", "/legal", "/gdpr", "/disclaimer",
+    "/imprint", "/unsubscribe",
+    // Sitemap/RSS（非用户页面）
+    "/sitemap", "/feed", "/rss",
+    // WordPress 内部（非内容页）
+    "/wp-content", "/wp-includes", "/wp-json", "/cdn-cgi",
+    // 搜索/过滤/排序（动态页面，重复内容多）
+    "/search", "/?s=", "/?q=",
+    // 媒体/下载（非文本内容）
+    "/downloads/", "/download/",
+    // 电商购物车/结账（非内容）
+    "/cart", "/checkout",
   ],
   timeout: CRAWL_PAGE_TIMEOUT_MS,
 };
@@ -136,17 +138,66 @@ export async function discoverPages(
 
 /**
  * 解析 sitemap.xml，支持 sitemap index
+ * 优先从 robots.txt 获取 sitemap 路径，然后尝试常见位置
  */
 async function parseSitemap(rootUrl: string): Promise<string[]> {
   const origin = new URL(rootUrl).origin;
   const urls: string[] = [];
 
-  // 尝试多个常见 sitemap 位置
-  const sitemapPaths = ["/sitemap.xml", "/sitemap_index.xml", "/sitemap.xml.gz"];
+  // 收集所有可能的 sitemap 路径（去重）
+  const sitemapPaths: string[] = [];
 
+  // 0. 从 robots.txt 发现 sitemap 路径（最权威）
+  try {
+    const robotsRes = await fetch(`${origin}/robots.txt`, {
+      headers: { "User-Agent": USER_AGENT },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (robotsRes.ok) {
+      const robotsText = await robotsRes.text();
+      const sitemapMatches = robotsText.matchAll(/Sitemap:\s*(.+)/gi);
+      for (const match of sitemapMatches) {
+        const sitemapUrl = match[1].trim();
+        if (sitemapUrl) sitemapPaths.push(new URL(sitemapUrl).pathname);
+      }
+    }
+  } catch {
+    // robots.txt 不可用，继续尝试常见路径
+  }
+
+  // 1. 常见 sitemap 位置（按可能性排序）
+  const commonPaths = [
+    "/sitemap.xml",
+    "/sitemap_index.xml",
+    "/sitemap-index.xml",
+    "/sitemap.xml.gz",
+    "/sitemap1.xml",
+    "/sitemaps/sitemap.xml",
+    "/wp-sitemap.xml",            // WordPress 5.5+
+    "/post-sitemap.xml",          // Yoast SEO
+    "/page-sitemap.xml",          // Yoast SEO
+    "/product-sitemap.xml",       // WooCommerce
+    "/news-sitemap.xml",
+    "/video-sitemap.xml",
+    "/image-sitemap.xml",
+    "/en-sitemap.xml",            // 多语言
+    "/zh-sitemap.xml",
+    "/sitemap/sitemap.xml",
+    "/static/sitemap.xml",        // Next.js / Gatsby
+    "/_next/static/sitemap.xml",   // Next.js
+    "/feed/sitemap.xml",
+  ];
+
+  for (const p of commonPaths) {
+    if (!sitemapPaths.includes(p)) {
+      sitemapPaths.push(p);
+    }
+  }
+
+  // 尝试每个 sitemap 路径
   for (const path of sitemapPaths) {
     try {
-      const sitemapUrl = `${origin}${path}`;
+      const sitemapUrl = path.startsWith("http") ? path : `${origin}${path}`;
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -164,8 +215,8 @@ async function parseSitemap(rootUrl: string): Promise<string[]> {
       // 检查是否是 sitemap index（包含多个 sitemap）
       if (xml.includes("<sitemapindex")) {
         const childSitemaps = extractSitemapIndexUrls(xml);
-        for (const childUrl of childSitemaps.slice(0, 5)) {
-          // 最多解析 5 个子 sitemap
+        for (const childUrl of childSitemaps.slice(0, 10)) {
+          // 放宽到最多 10 个子 sitemap
           const childUrls = await fetchSingleSitemap(childUrl);
           urls.push(...childUrls);
         }

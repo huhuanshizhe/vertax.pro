@@ -185,7 +185,7 @@ async function extractWithQwenLong(fileId: string): Promise<string> {
               "请提取这个文档中的所有文字内容，保留原始结构，只输出文字内容，不要添加任何解释或说明。",
           },
         ],
-        max_tokens: 8000,
+        max_tokens: 16000,
       }),
     }
   );
@@ -342,21 +342,19 @@ async function extractTextFromAudioVideo(
 
 /**
  * 使用 markitdown 提取文档内容（更好的表格/图表支持）
- * 注意：markitdown 是 Python 包，仅在服务器环境可用
+ * markitdown 是 Python 包，通过 child_process 调用 python -m markitdown
  */
 async function extractWithMarkitdown(filePath: string): Promise<string> {
   try {
-    // 条件性导入，避免构建时报错
-    if (typeof process !== "undefined" && process.version) {
-      // 动态 require，仅在运行时加载
-      const { MarkItDown } = eval("require")("markitdown");
-      const converter = new MarkItDown();
-      const result = await converter.convert(filePath);
-      return result.textContent || "";
-    }
-    return "";
-  } catch (error) {
-    console.warn("[text-extract] markitdown error:", error);
+    const { execSync } = await import("child_process");
+    const result = execSync(`python -m markitdown "${filePath}"`, {
+      encoding: "utf-8",
+      timeout: 30000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    return result?.trim() || "";
+  } catch {
+    // markitdown 不可用（Python 未安装或包未安装），静默降级到 officeparser
     return "";
   }
 }
@@ -664,10 +662,14 @@ export async function extractStructuredData(
   const data = await response.json();
   let content = data.choices?.[0]?.message?.content || "";
 
-  // 去除可能的 markdown 代码块包裹
+  // 提取 JSON 块：优先从 markdown 代码块中提取，否则直接解析
   content = content.trim();
-  if (content.startsWith("```")) {
-    content = content.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  const jsonBlockMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (jsonBlockMatch) {
+    content = jsonBlockMatch[1].trim();
+  } else if (content.startsWith("```")) {
+    // 没有闭合的 ```，去除开头的
+    content = content.replace(/^```(?:json)?\s*/, "").trim();
   }
 
   try {
@@ -690,8 +692,8 @@ export async function extractStructuredDataFromAsset(
   // 先提取文本
   const text = await extractTextFromAsset(storageKey, mimeType);
 
-  if (!text || text.startsWith("[")) {
-    // 如果是错误提示或空内容
+  if (!text || /^\[.*(?:不支持|暂不支持|为空|失败|处理中|未能)/.test(text)) {
+    // 匹配已知的错误标记格式，如 [application/pdf: 暂不支持...] 等
     return [];
   }
 

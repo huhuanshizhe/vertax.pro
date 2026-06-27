@@ -1,6 +1,7 @@
 ﻿import { NextRequest, NextResponse } from "next/server";
 import { ensureCronAuthorized } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
+import * as cheerio from "cheerio";
 import { extractLinksFromHtml, matchesLanguagePrefix, normalizeUrl } from "@/lib/services/site-crawler";
 import { fetchWebContent } from "@/lib/services/web-scraper";
 import { splitTextIntoChunks } from "@/lib/utils/chunk-utils";
@@ -22,8 +23,49 @@ const LOW_VALUE_URL_PATTERNS = [
 function isLowValuePage(url: string, content: string): boolean {
   const pathname = new URL(url).pathname.toLowerCase();
   if (LOW_VALUE_URL_PATTERNS.some((re) => re.test(pathname))) return true;
-  if (content.trim().length < 200) return true;
+  // 阈值从 200 降到 100 — 很多有效页面（导航页、索引页）正文在 100-200 字符之间
+  if (content.trim().length < 100) return true;
   return false;
+}
+
+/**
+ * 从原始 HTML 中提取正文文本（cheerio，用于增量模式合并请求）
+ */
+function extractTextFromHtml(html: string): { content: string; title: string } {
+  const $ = cheerio.load(html);
+
+  // 提取标题
+  const title = $("title").first().text().trim()
+    || $("h1").first().text().trim()
+    || "";
+
+  // 移除非内容元素
+  $("script, style, nav, header, footer, aside, noscript, iframe, svg, .nav, .sidebar, .footer, .header, .menu, .ad, .advertisement, .cookie-banner").remove();
+
+  // 优先提取正文区域
+  const contentSelectors = ["article", "main", ".content", ".post-content", ".entry-content", ".article-body", "#content", ".main-content"];
+  let mainContent = "";
+
+  for (const selector of contentSelectors) {
+    const el = $(selector).first();
+    if (el.length > 0) {
+      mainContent = el.text().trim();
+      if (mainContent.length > 200) break;
+    }
+  }
+
+  // 降级：使用 body
+  if (mainContent.length < 100) {
+    mainContent = $("body").text().trim();
+  }
+
+  // 清理多余空白
+  const content = mainContent
+    .replace(/\s+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  return { content, title };
 }
 
 type CrawlQueueUrlItem = {
@@ -250,11 +292,24 @@ async function processCrawlTask(task: {
         }
       }
 
-      // Fetch content (for asset creation)
-      const scraped = await fetchWebContent(pageUrl, {
-        maxChars: 30000,
-        timeout: 15000,
-      });
+      // Fetch content for asset creation
+      // 增量模式优化：如果已有 rawHtmlForLinks，直接用 cheerio 提取正文，省去 fetchWebContent 的第二次 HTTP 请求
+      let scraped: { success: boolean; content: string; title: string; error?: string };
+
+      if (isIncremental && rawHtmlForLinks.length > 500) {
+        const extracted = extractTextFromHtml(rawHtmlForLinks);
+        scraped = {
+          success: extracted.content.length > 0,
+          content: extracted.content,
+          title: extracted.title,
+          error: extracted.content.length === 0 ? "Failed to extract content from HTML" : undefined,
+        };
+      } else {
+        scraped = await fetchWebContent(pageUrl, {
+          maxChars: 30000,
+          timeout: 15000,
+        });
+      }
 
       // Incremental discovery: extract new links from HTML (regardless of page success/failure)
       if (isIncremental) {
@@ -288,7 +343,7 @@ async function processCrawlTask(task: {
           const addedUrls: string[] = [];
 
           for (const link of newLinks) {
-            if (addedUrls.length >= 20) break;
+            if (addedUrls.length >= 50) break; // 提升发现效率：每页最多发现 50 个新链接
             if (urlsArray.length + addedUrls.length >= maxPages) break;
 
             const normalized = normalizeUrl(link);

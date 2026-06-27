@@ -228,7 +228,7 @@ function buildCandidatesListWithIntelligence(candidates: DeepQualifyCandidate[])
   }).join('\n\n');
 }
 
-const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任务是判断候选公司是否真正需要"我方企业"的产品或服务。
+const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任务是评估候选公司的潜在价值并给出分级。
 
 ## 核心判断逻辑
 
@@ -240,7 +240,7 @@ const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任
 
 2. **采购能力**：该公司的规模和类型是否意味着它有采购我方产品的能力？
    - 是终端用户（直接使用者）还是中间商/经销商？
-   - 终端用户优先级更高
+   - 注意：终端用户和中间商都可能是有价值的客户，只是跟进策略不同
 
 3. **地理适配**：该公司所在的国家/地区是否属于我方的目标市场？
 
@@ -254,10 +254,13 @@ const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任
 
 ## 分层标准
 
-- **Tier A（优质客户）**：需求明确匹配 + 规模合适 + 地区匹配 + 积极信号，值得立即跟进
+重要原则：所有候选都有可能是潜在客户，分级只是优先级参考，不是排除依据。
+
+- **Tier A（优质客户）**：需求明确匹配 + 规模合适 + 地区匹配 + 积极信号，值得优先跟进
 - **Tier B（潜力客户）**：需求可能匹配但不确定，或规模/地区部分匹配，值得进一步了解
-- **Tier C（一般客户）**：间接关联，匹配度低但不排除
-- **excluded（排除）**：明确不是目标客户（竞争对手、中间商、行业无关）
+- **Tier C（一般客户）**：间接关联或匹配度较低，但仍可尝试接触
+
+注意：不存在"排除"分级。即使是中间商、贸易商或看起来不太匹配的候选，也给予 Tier C 评级。
 
 ## 信号加权规则
 
@@ -268,7 +271,10 @@ const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任
 
 ## 接触角度（approachAngle）
 
-为每个 Tier A/B 的候选提供一个具体的接触切入点。对 Tier C 和 excluded 可留空字符串。
+为每个候选提供一个具体的接触切入点（包括 Tier C）。切入角度应根据客户类型调整：
+- 终端工厂：强调产品质量、价格竞争力、交期
+- 贸易商/分销商：强调利润空间、供货稳定性、市场支持
+- 品牌商：强调定制能力、合规认证、品牌合作
 
 ## 输出要求
 
@@ -278,15 +284,14 @@ const SYSTEM_PROMPT = `你是一名专业的B2B出海获客分析师。你的任
   "results": [
     {
       "id": "候选ID",
-      "tier": "A|B|C|excluded",
+      "tier": "A|B|C",
       "confidence": 0.85,
       "matchReasons": ["具体原因1", "具体原因2"],
       "approachAngle": "推荐的接触切入点",
-      "exclusionReason": null,
       "dataGaps": ["需要补全的信息"]
     }
   ],
-  "batchSummary": { "total": 10, "tierA": 2, "tierB": 3, "tierC": 3, "excluded": 2 }
+  "batchSummary": { "total": 10, "tierA": 2, "tierB": 3, "tierC": 5 }
 }`;
 
 // ==================== 核心评估函数 ====================
@@ -491,73 +496,52 @@ export async function applyDeepQualifyResults(
 
   for (const result of results) {
     try {
-      if (result.tier === 'excluded') {
-        await prisma.radarCandidate.update({
-          where: { id: result.id },
-          data: {
-            status: 'EXCLUDED',
-            qualifyTier: 'excluded',
-            qualifyReason: result.exclusionReason || 'AI deep-qualify: excluded',
-            matchScore: result.confidence,
-            aiRelevance: {
-              tier: result.tier,
-              confidence: result.confidence,
-              matchReasons: result.matchReasons,
-              approachAngle: result.approachAngle,
-              source: 'deep-qualify-v2',
-            } as object,
-            qualifiedAt: new Date(),
-            qualifiedBy: 'ai-deep-qualify',
-          },
-        });
-        excluded++;
+      // 评分安慰剂策略：即使 AI 返回 excluded，也映射为 C 级，不排除任何候选
+      const effectiveTier = result.tier === 'excluded' ? 'C' : result.tier;
+      if (result.tier === 'excluded') excluded++;
 
-        // Feedback Loop: 记录排除
-        await appendExclusionFeedback(profileId, result);
-      } else {
-        // 判断是否需要 enrich
-        const candidate = await prisma.radarCandidate.findUnique({
-          where: { id: result.id },
-          select: { website: true, phone: true, email: true, sourceId: true },
-        });
+      // 判断是否需要 enrich
+      const candidate = await prisma.radarCandidate.findUnique({
+        where: { id: result.id },
+        select: { website: true, phone: true, email: true, sourceId: true },
+      });
 
-        const needsEnrich = candidate && !candidate.website && !candidate.phone && !candidate.email;
-        const finalStatus = (needsEnrich && (result.tier === 'A' || result.tier === 'B'))
-          ? 'ENRICHING'
-          : 'QUALIFIED';
+      const needsEnrich = candidate && !candidate.website && !candidate.phone && !candidate.email;
+      const finalStatus = (needsEnrich && (effectiveTier === 'A' || effectiveTier === 'B'))
+        ? 'ENRICHING'
+        : 'QUALIFIED';
 
-        await prisma.radarCandidate.update({
-          where: { id: result.id },
-          data: {
-            status: finalStatus,
-            qualifyTier: result.tier,
-            qualifyReason: result.matchReasons.join('; '),
-            matchScore: result.confidence,
-            aiSummary: result.approachAngle || null,
-            // Phase 4: 保存信号评分到 aiRelevance
-            aiRelevance: {
-              tier: result.tier,
-              confidence: result.confidence,
-              matchReasons: result.matchReasons,
-              approachAngle: result.approachAngle,
-              dataGaps: result.dataGaps,
-              source: 'deep-qualify-v2',
-              // 包含信号评分
-              signalScores: result.signalScores ? {
-                fundingSignal: result.signalScores.fundingSignal,
-                newsSignal: result.signalScores.newsSignal,
-                timingSignal: result.signalScores.timingSignal,
-                contactSignal: result.signalScores.contactSignal,
-                overallScore: result.signalScores.overallScore,
-              } : undefined,
-              signalBoost: result.signalBoost,
-            } as object,
-            qualifiedAt: new Date(),
-            qualifiedBy: 'ai-deep-qualify',
-          },
-        });
-        updated++;
-      }
+      await prisma.radarCandidate.update({
+        where: { id: result.id },
+        data: {
+          status: finalStatus,
+          qualifyTier: effectiveTier,
+          qualifyReason: result.matchReasons.join('; '),
+          matchScore: result.confidence,
+          aiSummary: result.approachAngle || null,
+          // Phase 4: 保存信号评分到 aiRelevance
+          aiRelevance: {
+            tier: effectiveTier,
+            confidence: result.confidence,
+            matchReasons: result.matchReasons,
+            approachAngle: result.approachAngle,
+            dataGaps: result.dataGaps,
+            source: 'deep-qualify-v2',
+            // 包含信号评分
+            signalScores: result.signalScores ? {
+              fundingSignal: result.signalScores.fundingSignal,
+              newsSignal: result.signalScores.newsSignal,
+              timingSignal: result.signalScores.timingSignal,
+              contactSignal: result.signalScores.contactSignal,
+              overallScore: result.signalScores.overallScore,
+            } : undefined,
+            signalBoost: result.signalBoost,
+          } as object,
+          qualifiedAt: new Date(),
+          qualifiedBy: 'ai-deep-qualify',
+        },
+      });
+      updated++;
     } catch (error) {
       errors.push(`Update ${result.id}: ${error instanceof Error ? error.message : 'Unknown'}`);
     }

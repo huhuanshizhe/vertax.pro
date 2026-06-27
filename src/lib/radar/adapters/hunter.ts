@@ -18,6 +18,7 @@ import type {
   AdapterFeatures,
   AdapterConfig,
 } from '@/lib/radar/adapters/types';
+import { trackApiCall } from '@/lib/services/api-usage-tracker';
 
 // 数据源类型标注
 export const HUNTER_SOURCE_TYPE = 'OFFICIAL_API' as const;
@@ -149,15 +150,18 @@ export class HunterAdapter implements RadarAdapter {
     }
 
     try {
+      const hunterTs = Date.now();
       const response = await fetch(`${this.baseUrl}/domain-search?${params}`, {
         signal: AbortSignal.timeout(this.timeout),
       });
 
       if (!response.ok) {
+        trackApiCall('hunter', { success: false, latencyMs: Date.now() - hunterTs, error: `HTTP ${response.status}` });
         throw new Error(`Hunter API error: ${response.status}`);
       }
 
       const data: HunterDomainSearchResponse = await response.json();
+      trackApiCall('hunter', { success: true, latencyMs: Date.now() - hunterTs });
       const duration = Date.now() - startTime;
 
       const items = data.data.emails.map(email => this.normalizeEmail(email, domain));

@@ -21,7 +21,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const inquiry = await db.inquiry.create({
+    const inquiry = await db.accessInquiry.create({
       data: {
         name: name.trim(),
         company: company.trim(),

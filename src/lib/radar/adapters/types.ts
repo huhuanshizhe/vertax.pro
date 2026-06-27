@@ -364,3 +364,95 @@ export interface DiscoveryEvidence {
 export function isStructuredEvidence(obj: unknown): obj is DiscoveryEvidence {
   return obj !== null && typeof obj === 'object' && '_v' in obj && (obj as { _v: unknown })._v === 2;
 }
+
+// ==================== Adapter Error ====================
+
+/** 适配器错误分类 */
+export type AdapterErrorCategory =
+  | 'AUTH'           // 认证失败（401/403）
+  | 'RATE_LIMIT'     // 触发限流（429）
+  | 'NETWORK'        // 网络错误（超时、连接失败）
+  | 'INVALID_INPUT'  // 输入参数错误
+  | 'UPSTREAM'       // 上游 API 返回异常
+  | 'INTERNAL';      // 适配器内部错误
+
+/** 适配器统一错误类 */
+export class AdapterError extends Error {
+  readonly category: AdapterErrorCategory;
+  readonly adapterCode: string;
+  readonly statusCode?: number;
+  readonly retryable: boolean;
+
+  constructor(opts: {
+    message: string;
+    category: AdapterErrorCategory;
+    adapterCode: string;
+    statusCode?: number;
+    cause?: unknown;
+  }) {
+    super(opts.message);
+    this.name = 'AdapterError';
+    this.category = opts.category;
+    this.adapterCode = opts.adapterCode;
+    this.statusCode = opts.statusCode;
+    this.retryable = opts.category === 'RATE_LIMIT' || opts.category === 'NETWORK';
+    if (opts.cause) {
+      (this as Error & { cause: unknown }).cause = opts.cause;
+    }
+  }
+}
+
+// ==================== Rate Limiter ====================
+
+/** 简易令牌桶限流器（每个适配器独立） */
+export class RateLimiter {
+  private tokens: number;
+  private lastRefill: number;
+
+  constructor(
+    private readonly maxRequests: number,
+    private readonly windowMs: number,
+  ) {
+    this.tokens = maxRequests;
+    this.lastRefill = Date.now();
+  }
+
+  /** 尝试获取一个令牌，返回是否允许 */
+  tryAcquire(): boolean {
+    this.refill();
+    if (this.tokens > 0) {
+      this.tokens--;
+      return true;
+    }
+    return false;
+  }
+
+  /** 等待直到获取到令牌（带超时） */
+  async acquire(timeoutMs = 30000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.tryAcquire()) return;
+      // 等待到下一个补充周期
+      const waitMs = Math.min(
+        this.lastRefill + this.windowMs - Date.now() + 10,
+        deadline - Date.now(),
+      );
+      if (waitMs <= 0) break;
+      await new Promise(r => setTimeout(r, waitMs));
+    }
+    throw new AdapterError({
+      message: `Rate limiter timeout after ${timeoutMs}ms`,
+      category: 'RATE_LIMIT',
+      adapterCode: 'rate_limiter',
+    });
+  }
+
+  private refill() {
+    const now = Date.now();
+    const elapsed = now - this.lastRefill;
+    if (elapsed >= this.windowMs) {
+      this.tokens = this.maxRequests;
+      this.lastRefill = now;
+    }
+  }
+}

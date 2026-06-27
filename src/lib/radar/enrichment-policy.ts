@@ -75,30 +75,20 @@ export function buildRadarOsintCheckpointSummary(
     reasons.push('high_risk');
   }
 
-  const allowPaidEnrichment = Boolean(
-    resolvedDomain &&
-      signalCount >= 1 &&
-      report.overallRisk !== 'HIGH'
-  );
+  // 策略调整：最大化联系人信息获取，OSINT 检查点仅作为风险提示，不作为拦截门槛
+  // 所有候选都允许进行付费富化（Hunter.io 邮箱查找等），仅 HIGH risk 时标注警告
+  const allowPaidEnrichment = Boolean(resolvedDomain || report.query.companyName);
 
-  if (allowPaidEnrichment && !activeWebsite) {
-    reasons.push('website_not_verified_for_writeback');
+  if (!resolvedDomain) {
+    reasons.push('no_resolved_domain_for_enrichment');
   }
 
-  if (allowPaidEnrichment && signalCount < 2) {
-    reasons.push('identity_signals_insufficient_for_writeback');
+  if (report.overallRisk === 'HIGH') {
+    reasons.push('⚠ high_risk_but_enrichment_allowed');
   }
 
-  if (allowPaidEnrichment && !['CLEAR', 'LOW'].includes(report.overallRisk)) {
-    reasons.push('risk_requires_review');
-  }
-
-  const allowPrimaryWriteback = Boolean(
-    allowPaidEnrichment &&
-      activeWebsite &&
-      signalCount >= 2 &&
-      ['CLEAR', 'LOW'].includes(report.overallRisk)
-  );
+  // 主数据回写：只要有数据就允许回写，风险仅标注不拦截
+  const allowPrimaryWriteback = allowPaidEnrichment;
 
   return {
     checkedAt: report.generatedAt.toISOString(),

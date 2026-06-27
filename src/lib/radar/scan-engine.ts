@@ -236,13 +236,20 @@ export async function runIncrementalScan(
       stats.fetched += result.items.length;
 
       // 批量收集并处理候选人（减少 N+1 数据库调用）
+      // 策略：不排除任何候选，全部入库。负向关键词仅在 matchExplain 中标注，由用户自行判断
       const batchItems: NormalizedCandidate[] = [];
       for (const item of result.items) {
-        // 条款B: 过滤排除词
+        // 负向关键词标注（不排除，仅标记）
         if (negativeKeywords.length > 0) {
           const itemText = `${item.displayName} ${item.description || ''}`.toLowerCase();
-          if (negativeKeywords.some(kw => itemText.includes(kw.toLowerCase()))) {
-            continue;
+          const matchedNegative = negativeKeywords.filter(kw => itemText.includes(kw.toLowerCase()));
+          if (matchedNegative.length > 0) {
+            const existing = (item.matchExplain as Record<string, unknown> | null) || {};
+            const existingReasons = (existing.reasons as string[] | undefined) || [];
+            item.matchExplain = {
+              ...existing,
+              reasons: [...existingReasons, `⚠ 命中排除词: ${matchedNegative.join(', ')} — 仅供参考，未自动排除`],
+            };
           }
         }
         batchItems.push(item);

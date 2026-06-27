@@ -20,7 +20,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const inquiries = await db.inquiry.findMany({
+  const inquiries = await db.accessInquiry.findMany({
     orderBy: { createdAt: "desc" },
   });
 
@@ -42,7 +42,7 @@ export async function PATCH(req: Request) {
   if (status) data.status = status;
   if (note !== undefined) data.note = note;
 
-  const inquiry = await db.inquiry.update({
+  const inquiry = await db.accessInquiry.update({
     where: { id },
     data,
   });

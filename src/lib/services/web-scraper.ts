@@ -17,6 +17,7 @@
 
 import * as cheerio from 'cheerio';
 import { resolveApiKey } from '@/lib/services/api-key-resolver';
+import { trackApiCall } from '@/lib/services/api-usage-tracker';
 
 // ==================== 类型定义 ====================
 
@@ -198,6 +199,7 @@ async function fetchWithJina(
   maxChars: number,
   timeout: number
 ): Promise<ScrapedContent> {
+  const ts = Date.now();
   const result: ScrapedContent = {
     success: false,
     title: '',
@@ -220,6 +222,7 @@ async function fetchWithJina(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
+      trackApiCall('jina', { success: false, latencyMs: Date.now() - ts, error: `HTTP ${response.status}` });
       return result;
     }
 
@@ -233,7 +236,10 @@ async function fetchWithJina(
     result.html = text; // Jina 返回的就是 Markdown
     result.success = text.length > 100;
 
+    trackApiCall('jina', { success: result.success, latencyMs: Date.now() - ts });
+
   } catch (error) {
+    trackApiCall('jina', { success: false, latencyMs: Date.now() - ts, error: error instanceof Error ? error.message : String(error) });
     console.error('[WebScraper] Jina error:', error);
   }
 
@@ -580,6 +586,7 @@ async function fetchWithFirecrawl(
   maxChars: number,
   timeout: number
 ): Promise<ScrapedContent> {
+  const ts = Date.now();
   const result: ScrapedContent = {
     success: false,
     title: '',
@@ -591,6 +598,7 @@ async function fetchWithFirecrawl(
   try {
     const apiKey = await resolveApiKey('firecrawl');
     if (!apiKey) {
+      trackApiCall('firecrawl', { success: false, latencyMs: Date.now() - ts, error: 'API key not configured' });
       return result;
     }
 
@@ -615,6 +623,7 @@ async function fetchWithFirecrawl(
 
     if (!response.ok) {
       result.error = `Firecrawl error: ${response.status}`;
+      trackApiCall('firecrawl', { success: false, latencyMs: Date.now() - ts, error: result.error });
       return result;
     }
 
@@ -633,6 +642,7 @@ async function fetchWithFirecrawl(
 
     if (!markdown && !html) {
       result.error = 'Firecrawl returned empty content';
+      trackApiCall('firecrawl', { success: false, latencyMs: Date.now() - ts, error: result.error });
       return result;
     }
 
@@ -640,9 +650,11 @@ async function fetchWithFirecrawl(
     result.title = payload.data?.metadata?.title?.trim() || '';
     result.content = (markdown || html).slice(0, maxChars);
     result.html = html || markdown;
+    trackApiCall('firecrawl', { success: result.success, latencyMs: Date.now() - ts });
     return result;
   } catch (error) {
     result.error = error instanceof Error ? error.message : 'Unknown error';
+    trackApiCall('firecrawl', { success: false, latencyMs: Date.now() - ts, error: result.error });
     return result;
   }
 }

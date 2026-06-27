@@ -109,22 +109,22 @@ export async function GET(req: NextRequest) {
 
           stats.stage1_processed++;
 
-          if (exclusionResult.excluded) {
-            // 直接排除，不消耗 AI token
+          if (exclusionResult.reason) {
+            // 有标注但不排除 — 标记为 C 级 + 警告原因，让所有候选都进入后续流程
             await prisma.radarCandidate.update({
               where: { id: candidate.id },
               data: {
-                status: 'EXCLUDED',
-                qualifyTier: 'excluded',
+                qualifyTier: 'C',
                 qualifyReason: `Stage 1: ${exclusionResult.reason}`,
                 qualifiedAt: new Date(),
-                qualifiedBy: 'rule-filter',
+                qualifiedBy: 'rule-label',
               },
             });
             stats.stage1_excluded++;
+          }
 
-            await appendExclusionRule(profileId, candidate.displayName);
-          } else {
+          // 所有候选都进入下一阶段（不排除）
+          {
             stage1Passed.push(candidate);
             stats.stage1_passed++;
           }
@@ -242,8 +242,8 @@ interface Stage1Result {
 }
 
 /**
- * Stage 1 快速筛选：只淘汰"明显不匹配"的候选
- * 设计原则：宁可放过，不可错杀
+ * Stage 1 快速标注：评分作为安慰剂，不排除任何候选
+ * 设计原则：所有候选都有可能是潜在客户，只标注不拦截
  */
 function stage1RuleFilter(
   candidate: {
@@ -260,24 +260,21 @@ function stage1RuleFilter(
 ): Stage1Result {
   const text = `${candidate.displayName} ${candidate.description || ''}`.toLowerCase();
 
-  // 1. 负向信号检查（命中即排除）
+  // 1. 负向信号检查（仅标注，不排除）
   for (const signal of config.negativeSignals) {
     const matchCount = signal.keywords.filter(kw => text.includes(kw.toLowerCase())).length;
-    // 需要命中多个关键词才排除（降低误杀率）
     if (matchCount >= 2) {
-      return { excluded: true, reason: `负向信号: ${signal.name} (${matchCount} keywords matched)` };
+      return { excluded: false, reason: `⚠ 负向信号: ${signal.name} (${matchCount} keywords matched) — 仅供参考，未自动排除` };
     }
-    // 单个关键词命中但非常精确（如完整匹配公司类型词）
     if (matchCount === 1) {
       const matched = signal.keywords.find(kw => text.includes(kw.toLowerCase()))!;
-      // 只在候选名称中精确包含该关键词时才排除
       if (candidate.displayName.toLowerCase().includes(matched.toLowerCase())) {
-        return { excluded: true, reason: `负向信号: ${signal.name} (name match: "${matched}")` };
+        return { excluded: false, reason: `⚠ 负向信号: ${signal.name} (name match: "${matched}") — 仅供参考` };
       }
     }
   }
 
-  // 2. 排除规则检查（已排除的公司名）
+  // 2. 排除名单检查（仅标注，不排除）
   const rules = (profile.exclusionRules as { excludedCompanies?: string[] }) || {};
   if (rules.excludedCompanies?.length) {
     const nameLower = candidate.displayName.toLowerCase();
@@ -286,7 +283,7 @@ function stage1RuleFilter(
       nameLower.includes(excluded.toLowerCase())
     );
     if (matched) {
-      return { excluded: true, reason: `排除名单: "${matched}"` };
+      return { excluded: false, reason: `⚠ 匹配排除名单: "${matched}" — 仅供参考，未自动排除` };
     }
   }
 
