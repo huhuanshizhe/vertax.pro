@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { discoverPages, normalizeUrl, detectLanguagePrefix, matchesLanguagePrefix } from "@/lib/services/site-crawler";
+import { discoverPages, normalizeUrl, detectLanguagePrefix, matchesLanguagePrefix, detectDominantLanguage } from "@/lib/services/site-crawler";
 import crypto from "crypto";
 
 export const maxDuration = 300; // 5 minutes - wait for first batch to complete
@@ -64,7 +64,7 @@ export async function POST(req: NextRequest) {
   try {
     // 检测语言前缀（多语言网站仅采一种语言）
     const rootPathname = new URL(normalizedRoot).pathname;
-    const langPrefix = detectLanguagePrefix(rootPathname);
+    let langPrefix = detectLanguagePrefix(rootPathname);
 
     // Phase 1: 尝试 sitemap（快速路径）
     const { urls: sitemapUrls, method } = await discoverPages(normalizedRoot, {
@@ -73,6 +73,16 @@ export async function POST(req: NextRequest) {
 
     if (sitemapUrls.length > 0) {
       // ========== 模式 A：Sitemap 全量入队（过滤语言） ==========
+
+      // 如果用户没有指定语言，自动检测多语言并锁定主流语言
+      if (!langPrefix && sitemapUrls.length > 1) {
+        const detectedLang = detectDominantLanguage(sitemapUrls);
+        if (detectedLang) {
+          langPrefix = detectedLang;
+          console.log(`[web-import] Auto-detected multi-language site, locking to: ${langPrefix}`);
+        }
+      }
+
       const filteredUrls = langPrefix
         ? sitemapUrls.filter(u => matchesLanguagePrefix(u, langPrefix))
         : sitemapUrls;

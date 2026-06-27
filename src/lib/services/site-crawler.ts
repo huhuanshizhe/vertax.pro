@@ -409,10 +409,11 @@ export function extractLinksFromHtml(
 
 /**
  * 从路径中检测语言前缀
- * 支持: /en/xxx, /zh/xxx, /zh-CN/xxx, /fr/xxx 等
+ * 支持: /en/xxx, /en, /zh/xxx, /zh-CN/xxx, /fr/xxx 等
  */
 export function detectLanguagePrefix(pathname: string): string | null {
-  const match = pathname.match(/^\/([a-z]{2}(-[A-Z]{2})?)\//);
+  // 匹配 /xx/ 或 /xx-XX/ 或 /xx（路径末尾无斜杠也算）
+  const match = pathname.match(/^\/([a-z]{2}(?:-[A-Za-z]{2,})?)(?:\/|$)/);
   return match ? match[1].toLowerCase() : null;
 }
 
@@ -431,6 +432,49 @@ export function matchesLanguagePrefix(url: string, langPrefix: string | null): b
   } catch {
     return true;
   }
+}
+
+/**
+ * 检测 URL 列表中占主导地位的语言前缀
+ * 用于多语言网站自动锁定一种语言
+ *
+ * @returns 主导语言前缀（如 'en', 'zh'），如果不是多语言网站则返回 null
+ */
+export function detectDominantLanguage(urls: string[]): string | null {
+  const langCounts = new Map<string, number>();
+
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      const lang = detectLanguagePrefix(parsed.pathname);
+      if (lang) {
+        langCounts.set(lang, (langCounts.get(lang) || 0) + 1);
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  // 如果没有语言前缀的 URL，说明不是多语言网站
+  if (langCounts.size === 0) return null;
+
+  // 如果只有一种语言，不需要锁定
+  if (langCounts.size === 1) return null;
+
+  // 多语言网站：返回数量最多的语言
+  let dominantLang: string | null = null;
+  let maxCount = 0;
+  for (const [lang, count] of langCounts) {
+    if (count > maxCount) {
+      maxCount = count;
+      dominantLang = lang;
+    }
+  }
+
+  // 如果英语存在，优先选英语（B2B 外贸场景）
+  if (langCounts.has('en')) return 'en';
+
+  return dominantLang;
 }
 
 /**
