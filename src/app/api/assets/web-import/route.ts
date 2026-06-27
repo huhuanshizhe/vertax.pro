@@ -1,4 +1,4 @@
-import { NextRequest, after } from "next/server";
+import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { discoverPages, normalizeUrl, detectLanguagePrefix, matchesLanguagePrefix } from "@/lib/services/site-crawler";
@@ -195,15 +195,13 @@ function triggerCrawlProcessing(req: NextRequest, taskId: string) {
   const proto = host.startsWith("localhost") || host.startsWith("127.") ? "http" : "https";
   const cronUrl = `${proto}://${host}/api/cron/web-crawl`;
 
-  after(async () => {
-    await fetch(cronUrl, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${process.env.CRON_SECRET || "dev-secret"}`,
-      },
-    }).catch((err) => {
-      console.warn(`[web-import] Failed to trigger immediate processing for task ${taskId}:`, err);
-    });
+  fetch(cronUrl, {
+    method: "GET",
+    headers: {
+      "Authorization": `Bearer ${process.env.CRON_SECRET || "dev-secret"}`,
+    },
+  }).catch((err) => {
+    console.warn(`[web-import] Failed to trigger immediate processing for task ${taskId}:`, err);
   });
 }
 

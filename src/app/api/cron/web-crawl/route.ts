@@ -1,11 +1,14 @@
-﻿import { NextRequest, NextResponse, after } from "next/server";
+﻿import { NextRequest, NextResponse } from "next/server";
 import { ensureCronAuthorized } from "@/lib/cron-auth";
 import { db } from "@/lib/db";
 import { extractLinksFromHtml, matchesLanguagePrefix, normalizeUrl } from "@/lib/services/site-crawler";
 import { fetchWebContent } from "@/lib/services/web-scraper";
 import { splitTextIntoChunks } from "@/lib/utils/chunk-utils";
 
-export const maxDuration = 300; // 5 minutes per batch
+export const maxDuration = 300; // 5 minutes
+
+// Time budget: stop processing with 30s margin to ensure response is sent
+const TIME_BUDGET_MS = 240_000;
 
 // URL patterns that indicate low-value pages
 const LOW_VALUE_URL_PATTERNS = [
@@ -47,47 +50,68 @@ type CrawlQueueMetadata = {
 /**
  * Web Crawl Background Worker
  * 
- * 鍒嗘澶勭悊鐖彇浠诲姟锛屾瘡娆″鐞?20 椤? * 鐢?Vercel Cron 瀹氭椂璋冪敤锛氭瘡 5 鍒嗛挓鎵ц涓€娆? * 
- * 閲嶈锛歏ercel Cron Jobs 鍙彂閫?GET 璇锋眰锛屽繀椤诲鍑?GET handler
+ * Processes crawl tasks in batches of 20 URLs per iteration.
+ * Loops within a single function call until all URLs are processed or time budget is reached.
+ * Called by Vercel Cron Jobs (daily) or triggered manually after task creation.
+ * 
+ * IMPORTANT: Vercel Cron Jobs only send GET requests, must export GET handler
  */
 export async function GET(req: NextRequest) {
-  // 楠岃瘉 cron secret
   const unauthorizedResponse = ensureCronAuthorized(req);
   if (unauthorizedResponse) {
     return unauthorizedResponse;
   }
 
-  const isFromCron = req.headers.get("x-vercel-cron") === "true";
+  const startTime = Date.now();
 
   try {
-    // Find pending/processing tasks
     const tasks = await db.crawlQueue.findMany({
-      where: {
-        status: { in: ["pending", "processing"] },
-      },
-      orderBy: [
-        { createdAt: "asc" }, // Process oldest first
-      ],
-      take: 3, // Process up to 3 tasks per run
+      where: { status: { in: ["pending", "processing"] } },
+      orderBy: [{ createdAt: "asc" }],
+      take: 3,
     });
 
     if (tasks.length === 0) {
-      return NextResponse.json({ 
-        message: "No pending crawl tasks",
-        processed: 0,
-      });
+      return NextResponse.json({ message: "No pending crawl tasks", processed: 0 });
     }
 
     let totalProcessed = 0;
-    let hasMoreWork = false;
     const results: Array<{ taskId: string; processed: number; error?: string }> = [];
 
     for (const task of tasks) {
+      // Time budget check before each task
+      if (Date.now() - startTime > TIME_BUDGET_MS) {
+        console.log(`[web-crawl] Time budget reached, stopping`);
+        break;
+      }
+
       try {
-        const result = await processCrawlTask(task);
-        results.push(result);
-        totalProcessed += result.processed;
-        if (result.hasMoreWork) hasMoreWork = true;
+        // Loop: process batches until done or time budget
+        let currentTask = task;
+        let taskTotalProcessed = 0;
+        let iterations = 0;
+        const MAX_ITERATIONS = 25; // safety limit
+
+        while (iterations < MAX_ITERATIONS) {
+          if (Date.now() - startTime > TIME_BUDGET_MS) {
+            console.log(`[web-crawl] Time budget reached during task ${currentTask.id}`);
+            break;
+          }
+
+          const result = await processCrawlTask(currentTask);
+          taskTotalProcessed += result.processed;
+          iterations++;
+
+          if (!result.hasMoreWork) break;
+
+          // Re-fetch task to get updated URLs (new links discovered)
+          const refreshed = await db.crawlQueue.findUnique({ where: { id: currentTask.id } });
+          if (!refreshed) break;
+          currentTask = refreshed;
+        }
+
+        results.push({ taskId: task.id, processed: taskTotalProcessed });
+        totalProcessed += taskTotalProcessed;
       } catch (err) {
         console.error(`[web-crawl] Task ${task.id} error:`, err);
         results.push({
@@ -96,7 +120,6 @@ export async function GET(req: NextRequest) {
           error: err instanceof Error ? err.message : "Unknown error",
         });
 
-        // Mark task as failed
         await db.crawlQueue.update({
           where: { id: task.id },
           data: {
@@ -111,20 +134,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // ===== 鑷Е鍙戦摼锛氬鏋滆繕鏈夊緟澶勭悊 URL锛宖ire-and-forget 璋冪敤鑷繁缁х画澶勭悊 =====
-    if (hasMoreWork && !isFromCron) {
-      after(async () => {
-        await selfTriggerCrawl(req).catch((err) => {
-          console.warn("[web-crawl] Self-trigger failed:", err);
-        });
-      });
-    }
-
     return NextResponse.json({
-      message: `Processed ${totalProcessed} pages across ${tasks.length} tasks${hasMoreWork ? " (more pending)" : ""}`,
+      message: `Processed ${totalProcessed} pages across ${results.length} tasks`,
       tasks: results,
       totalProcessed,
-      hasMoreWork,
+      elapsedMs: Date.now() - startTime,
     });
   } catch (err) {
     console.error("[web-crawl] Critical error:", err);
@@ -132,23 +146,6 @@ export async function GET(req: NextRequest) {
       error: err instanceof Error ? err.message : "Critical error" 
     }, { status: 500 });
   }
-}
-
-/**
- * 鑷Е鍙戦摼锛歸ire-and-forget 璋冪敤鑷繁缁х画澶勭悊涓嬩竴鎵
- */
-function selfTriggerCrawl(req: NextRequest) {
-  const host = req.headers.get("host") || process.env.VERCEL_URL || "";
-  const proto = host.startsWith("localhost") ? "http" : "https";
-  const cronUrl = `${proto}://${host}/api/cron/web-crawl`;
-
-  return fetch(cronUrl, {
-    method: "GET",
-    headers: {
-      "Authorization": `Bearer ${process.env.CRON_SECRET || "dev-secret"}`,
-      "User-Agent": "vercel-cron-self-trigger",
-    },
-  });
 }
 
 /**
@@ -227,9 +224,9 @@ async function processCrawlTask(task: {
         continue;
       }
 
-      // ===== 增量发现：先获取原始 HTML 提取链接 =====
-      // 必须单独 fetch 原始 HTML，因为 fetchWebContent 第一优先级 Jina 返回 Markdown，
-      // cheerio 无法从 Markdown 中提取 <a href> 链接
+      // Incremental discovery: fetch raw HTML for link extraction
+      // Must fetch raw HTML because fetchWebContent's first priority (Jina) returns Markdown,
+      // and cheerio cannot extract <a href> links from Markdown
       const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
       let rawHtmlForLinks = "";
       if (isIncremental) {
@@ -258,18 +255,18 @@ async function processCrawlTask(task: {
         timeout: 15000,
       });
 
-      // ===== 增量发现：从 HTML 提取新链接（无论页面成功与否） =====
+      // Incremental discovery: extract new links from HTML (regardless of page success/failure)
       if (isIncremental) {
         try {
           const langPrefix = taskMetadata.languagePrefix ?? null;
           const maxPages = (taskMetadata.maxPagesRequested as number) || 500;
           const rootHostname = new URL(task.rootUrl).hostname;
 
-          // 优先用 raw fetch 的 HTML，降级到 scraped.html
+          // Prefer raw fetch HTML, fallback to scraped.html
           const htmlForLinks = rawHtmlForLinks || scraped.html || "";
           const newLinks = extractLinksFromHtml(htmlForLinks, pageUrl, rootHostname);
 
-          // 去重 + 语言前缀过滤
+          // Dedup + language prefix filter
           const knownUrls = new Set(urlsArray.map(u => normalizeUrl(u.url)));
           const addedUrls: string[] = [];
 
@@ -387,7 +384,7 @@ async function processCrawlTask(task: {
   const newProcessedCount = task.processedPages + processed + failed + skipped;
   const isIncremental = taskMetadata.discoveryMethod === "incremental-crawl";
 
-  // 增量模式：所有 URL 已处理完（无 pending）且本批未发现新链接时才算完成
+  // Incremental mode: complete when no pending URLs remain
   const stillPending = urlsArray.filter(u => u.status === "pending").length;
   const isComplete = isIncremental
     ? (stillPending === 0)
@@ -397,7 +394,7 @@ async function processCrawlTask(task: {
     where: { id: taskId },
     data: {
       urls: urlsArray,
-      totalPages: urlsArray.length, // 增量模式下实时反映实际页面数
+      totalPages: urlsArray.length, // Reflect actual page count in incremental mode
       processedPages: newProcessedCount,
       status: isComplete ? "completed" : "processing",
       metadata: {
@@ -411,4 +408,3 @@ async function processCrawlTask(task: {
 
   return { taskId, processed, failed, skipped, hasMoreWork: !isComplete };
 }
-
