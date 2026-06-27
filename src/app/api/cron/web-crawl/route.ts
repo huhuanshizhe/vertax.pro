@@ -236,7 +236,7 @@ async function processCrawlTask(task: {
               "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
               Accept: "text/html,application/xhtml+xml",
             },
-            signal: AbortSignal.timeout(8_000),
+            signal: AbortSignal.timeout(15_000),
           });
           if (rawRes.ok) {
             const ct = rawRes.headers.get("content-type") || "";
