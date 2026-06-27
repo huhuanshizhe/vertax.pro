@@ -104,6 +104,7 @@ export async function discoverPages(
 
   // 规范化根 URL
   const normalizedRoot = normalizeUrl(rootUrl);
+  const rootOrigin = new URL(normalizedRoot).origin;
   const rootHostname = new URL(normalizedRoot).hostname;
 
   // 1. 尝试 sitemap（sitemap 解析内部有逐 URL 10s 超时）
@@ -111,11 +112,39 @@ export async function discoverPages(
   if (sitemapElapsed < DISCOVERY_TIME_BUDGET_MS - 5_000) {
     const sitemapUrls = await parseSitemap(normalizedRoot);
     if (sitemapUrls.length > 0) {
-      const filtered = filterUrls(sitemapUrls, rootHostname, opts);
-      return {
-        urls: filtered.slice(0, opts.maxPages),
-        method: "sitemap",
-      };
+      // Vercel/Netlify 自定义域名兼容：sitemap 中的 URL 可能使用部署域名
+      // (如 xxx.vercel.app) 而非用户输入的自定义域名 (如 www.example.com)
+      // 检测：如果 sitemap URL 全部不匹配 rootHostname，尝试重写
+      const matchingCount = sitemapUrls.filter(u => {
+        try { return new URL(u).hostname === rootHostname; } catch { return false; }
+      }).length;
+
+      let finalUrls: string[];
+      if (matchingCount === 0 && sitemapUrls.length > 0) {
+        // 所有 sitemap URL 使用了不同的 hostname — 重写为 rootOrigin
+        console.log(`[discoverPages] Sitemap URLs use different hostname, rewriting to ${rootOrigin}`);
+        finalUrls = sitemapUrls.map(u => {
+          try {
+            const parsed = new URL(u);
+            parsed.protocol = new URL(rootOrigin).protocol;
+            parsed.hostname = rootHostname;
+            parsed.port = new URL(rootOrigin).port;
+            return parsed.href;
+          } catch {
+            return u;
+          }
+        });
+      } else {
+        finalUrls = sitemapUrls;
+      }
+
+      const filtered = filterUrls(finalUrls, rootHostname, opts);
+      if (filtered.length > 0) {
+        return {
+          urls: filtered.slice(0, opts.maxPages),
+          method: "sitemap",
+        };
+      }
     }
   }
 
