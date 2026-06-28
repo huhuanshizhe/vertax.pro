@@ -996,6 +996,10 @@ export async function importCandidateToCompanyV2(
       sourceCandidateId: candidateId,
       sourceUrl: candidate.sourceUrl,
       status: 'new',
+      // 断点3修复：A/B 级候选导入后自动标记待富化
+      enrichmentStatus: (candidate.qualifyTier === 'A' || candidate.qualifyTier === 'B')
+        ? 'PENDING'
+        : undefined,
       outreachArtifacts: candidateContactSnapshot
         ? buildProspectOutreachStateValue(null, {
             contactSnapshot: candidateContactSnapshot,

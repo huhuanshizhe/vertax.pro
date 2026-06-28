@@ -95,6 +95,8 @@ export async function runIncrementalScan(
           buyerPersonas: true,
           painPoints: true,
           buyingTriggers: true,
+          techAdvantages: true,
+          differentiators: true,
         },
       }),
     ]);

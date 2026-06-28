@@ -30,6 +30,7 @@ type ProspectCompanyWithContacts = ProspectCompany & {
 
 type CompanyFeedbackSummary = {
   companyScoreAdjustment: number;
+  intentScoreBoost: number; // 意向信号加分（断点6修复）
   notes: string[];
   excludeFromDaily: boolean;
   engaged: boolean;
@@ -297,6 +298,7 @@ function getSeniorityBoost(seniority: string | null | undefined) {
 function createEmptyFeedbackSummary(): CompanyFeedbackSummary {
   return {
     companyScoreAdjustment: 0,
+    intentScoreBoost: 0,
     notes: [],
     excludeFromDaily: false,
     engaged: false,
@@ -553,6 +555,50 @@ async function loadFeedbackMap(
     summary.companyScoreAdjustment = clamp(summary.companyScoreAdjustment, -35, 20);
   });
 
+  // 断点6修复：加载意向信号评分，加入每日工作台排序
+  const companyIds = Array.from(feedbackByCompany.keys());
+  if (companyIds.length > 0) {
+    try {
+      const intentLookback = new Date();
+      intentLookback.setDate(intentLookback.getDate() - 30); // 30天内信号
+
+      const intentSignals = await prisma.intentSignal.findMany({
+        where: {
+          tenantId,
+          companyId: { in: companyIds },
+          occurredAt: { gte: intentLookback },
+        },
+        select: {
+          companyId: true,
+          score: true,
+          signalType: true,
+          occurredAt: true,
+        },
+      });
+
+      // 按公司汇总意向分数（带时间衰减）
+      const now = Date.now();
+      for (const signal of intentSignals) {
+        if (!signal.companyId) continue;
+        const summary = feedbackByCompany.get(signal.companyId);
+        if (!summary) continue;
+
+        // 时间衰减：7天内全分，7-30天半分
+        const daysAgo = (now - signal.occurredAt.getTime()) / (1000 * 60 * 60 * 24);
+        const decay = daysAgo <= 7 ? 1.0 : 0.5;
+        summary.intentScoreBoost += signal.score * decay;
+      }
+
+      // 上限封顶
+      feedbackByCompany.forEach((summary) => {
+        summary.intentScoreBoost = Math.min(summary.intentScoreBoost, 40);
+      });
+    } catch (error) {
+      // IntentSignal 表可能不存在，静默跳过
+      console.warn('[DailyWorkspace] Failed to load intent signals:', error);
+    }
+  }
+
   return feedbackByCompany;
 }
 
@@ -727,6 +773,7 @@ function buildWorkspaceItem(
     (company.status === 'contacted' ? -10 : 0) +
     (company.lastContactedAt ? -6 : 0) +
     (feedback?.companyScoreAdjustment || 0) +
+    (feedback?.intentScoreBoost || 0) +
     seasonalBoost;
 
   const contactScore = recommendedContact

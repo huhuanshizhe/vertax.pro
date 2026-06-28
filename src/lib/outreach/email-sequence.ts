@@ -141,7 +141,13 @@ export async function sendWithSequence(
     records: [],
   };
 
-  for (const email of sequence.emails) {
+  // 断点5修复：第一步立即发送，后续步骤创建 scheduled 记录（由 cron 定时发送）
+  const emails = sequence.emails || [];
+  if (emails.length === 0) return result;
+
+  for (let stepIndex = 0; stepIndex < emails.length; stepIndex++) {
+    const email = emails[stepIndex];
+
     for (const candidateId of candidateIds) {
       try {
         const candidate = await db.radarCandidate.findUnique({
@@ -164,14 +170,48 @@ export async function sendWithSequence(
         const subject = renderTemplate(email.subject, { name: candidate.displayName });
         const body = renderTemplate(email.body, { name: candidate.displayName });
 
-        const sendResult = await sendEmail({
-          to: targetEmail,
-          tenantId,
-          subject,
-          html: body,
-        });
+        if (stepIndex === 0) {
+          // 第一步：立即发送
+          const sendResult = await sendEmail({
+            to: targetEmail,
+            tenantId,
+            subject,
+            html: body,
+          });
 
-        if (sendResult.success) {
+          if (sendResult.success) {
+            const record = await db.outreachRecord.create({
+              data: {
+                tenantId,
+                candidateId: candidate.id,
+                toEmail: targetEmail,
+                toName: candidate.displayName,
+                subject,
+                bodyText: body,
+                messageId: sendResult.messageId,
+                status: "sent",
+                sentAt: new Date(),
+                metadata: {
+                  sequenceStep: stepIndex + 1,
+                  sequenceName: sequence.name || null,
+                },
+              },
+            });
+
+            result.records.push(record.id);
+            result.sent++;
+          } else {
+            result.failed++;
+            result.errors.push(`${candidate.displayName}: ${sendResult.error}`);
+          }
+        } else {
+          // 后续步骤：创建 scheduled 记录，延迟发送
+          // 延迟天数 = 步骤序号 * 3 天（第2步3天后，第3步6天后...）
+          const delayDays = stepIndex * 3;
+          const scheduledAt = new Date();
+          scheduledAt.setDate(scheduledAt.getDate() + delayDays);
+          scheduledAt.setHours(9, 0, 0, 0); // 上午 9 点
+
           const record = await db.outreachRecord.create({
             data: {
               tenantId,
@@ -180,22 +220,17 @@ export async function sendWithSequence(
               toName: candidate.displayName,
               subject,
               bodyText: body,
-              messageId: sendResult.messageId,
-              status: "sent",
-              sentAt: new Date(),
+              status: "scheduled",
               metadata: {
-                recommendedContact: contactProfile?.recommendedContact?.label || null,
-                primaryEmail: contactProfile?.primaryEmail?.value || null,
-                complianceNote: contactProfile?.complianceNote || null,
+                sequenceStep: stepIndex + 1,
+                sequenceName: sequence.name || null,
+                scheduledAt: scheduledAt.toISOString(),
               },
             },
           });
 
           result.records.push(record.id);
           result.sent++;
-        } else {
-          result.failed++;
-          result.errors.push(`${candidate.displayName}: ${sendResult.error}`);
         }
       } catch (error) {
         result.failed++;
@@ -280,6 +315,7 @@ export async function processScheduledEmails(): Promise<{
   errors: number;
 }> {
   const stats = { processed: 0, sent: 0, errors: 0 };
+  const now = new Date();
 
   const scheduledEmails = await db.outreachRecord.findMany({
     where: { status: "scheduled" },
@@ -287,6 +323,14 @@ export async function processScheduledEmails(): Promise<{
   });
 
   for (const email of scheduledEmails) {
+    // 断点5修复：检查 metadata.scheduledAt，未到时间的跳过
+    const metadata = (email.metadata as Record<string, unknown>) || {};
+    const scheduledAt = metadata.scheduledAt ? new Date(metadata.scheduledAt as string) : null;
+
+    if (scheduledAt && scheduledAt > now) {
+      continue; // 还没到发送时间，跳过
+    }
+
     stats.processed++;
 
     try {

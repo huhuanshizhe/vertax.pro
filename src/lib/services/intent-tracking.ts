@@ -18,6 +18,7 @@ import { prisma } from '@/lib/prisma';
 export type SignalType =
   | 'email_open'      // 邮件打开
   | 'email_click'     // 链接点击
+  | 'email_reply'     // 邮件回复（最强信号）
   | 'website_visit'   // 网站访问
   | 'pricing_view'    // 定价页访问
   | 'demo_request';   // 演示请求
@@ -57,6 +58,7 @@ export interface IntentScore {
 const SIGNAL_SCORES: Record<SignalType, { intensity: number; score: number }> = {
   email_open: { intensity: 0.3, score: 10 },
   email_click: { intensity: 0.6, score: 25 },
+  email_reply: { intensity: 1.0, score: 50 }, // 回复是最强购买信号
   website_visit: { intensity: 0.3, score: 10 },
   pricing_view: { intensity: 0.7, score: 30 },
   demo_request: { intensity: 0.9, score: 50 },
@@ -442,7 +444,7 @@ export async function getIntentTimeline(
 // ==================== 内部函数 ====================
 
 /**
- * 创建意图提醒
+ * 创建意图提醒（写入候选 matchExplain + 创建通知记录）
  */
 async function createIntentAlert(
   tenantId: string,
@@ -454,17 +456,38 @@ async function createIntentAlert(
   }
 ): Promise<void> {
   try {
-    // 获取候选信息
-    let companyName = 'Unknown';
+    // 获取候选/公司信息
+    let companyName = '未知客户';
+    let contactInfo = '';
     if (data.candidateId) {
       const candidate = await prisma.radarCandidate.findUnique({
         where: { id: data.candidateId },
-        select: { displayName: true },
+        select: { displayName: true, email: true, phone: true },
       });
-      if (candidate) companyName = candidate.displayName;
+      if (candidate) {
+        companyName = candidate.displayName;
+        contactInfo = candidate.email || candidate.phone || '';
+      }
+    } else if (data.companyId) {
+      const company = await prisma.prospectCompany.findUnique({
+        where: { id: data.companyId },
+        select: { name: true },
+      });
+      if (company) companyName = company.name;
     }
 
-    // 存储到候选的metadata中，由前端轮询获取
+    const signalLabel: Record<string, string> = {
+      email_reply: '回复了邮件',
+      email_click: '点击了邮件链接',
+      email_open: '打开了邮件',
+      pricing_view: '查看了定价页',
+      demo_request: '请求了产品演示',
+      website_visit: '访问了官网',
+    };
+
+    const message = `${companyName} ${signalLabel[data.signalType] || data.signalType}（意向分 ${data.score}）`;
+
+    // 写入候选的 matchExplain.alert（前端可读取）
     if (data.candidateId) {
       await prisma.radarCandidate.update({
         where: { id: data.candidateId },
@@ -473,13 +496,24 @@ async function createIntentAlert(
             alert: {
               type: data.signalType,
               score: data.score,
-              message: `${companyName} 表现出高意向行为: ${data.signalType}`,
+              message,
               createdAt: new Date().toISOString(),
             },
           },
         },
       });
     }
+
+    // 创建通知记录（用户在 Dashboard 可以看到）
+    await prisma.notification.create({
+      data: {
+        tenantId,
+        type: 'intent_alert',
+        title: data.signalType === 'email_reply' ? '🔥 客户回复' : '📊 高意向信号',
+        body: message,
+        actionUrl: data.candidateId ? `/customer/radar/candidates?id=${data.candidateId}` : undefined,
+      },
+    });
   } catch (error) {
     console.error('[IntentTracking] createIntentAlert error:', error);
   }

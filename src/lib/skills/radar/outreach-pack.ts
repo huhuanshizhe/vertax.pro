@@ -152,6 +152,13 @@ ${JSON.stringify(matchReasons, null, 2)}` : ''}
 ${typeof approachAngle === 'string' && approachAngle.trim() ? `=== Existing Approach Angle ===
 ${approachAngle}` : ''}
 
+${Array.isArray(input.matchedContentLinks) && input.matchedContentLinks.length > 0 ? `=== 相关营销内容（可在邮件中自然引用）===
+以下文章/案例与这个潜在客户相关，可以在邮件中适当引用链接：
+${input.matchedContentLinks.map((link: any, i: number) =>
+  `- [C${i + 1}] ${link.title || '文章'}: ${link.url || link.slug || ''}${link.matchScore ? ` (匹配度 ${link.matchScore}%)` : ''}`
+).join('\n')}
+在邮件中引用时请自然嵌入，例如："我们在最近的文章中分享了相关案例: [文章标题](链接)"` : ''}
+
 目标层级：${input.tier || 'A'}
 
 === 任务要求 ===

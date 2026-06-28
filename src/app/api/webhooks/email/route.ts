@@ -1,7 +1,7 @@
 /**
  * 邮件事件追踪API
  *
- * 接收Resend webhook事件，记录邮件打开/点击
+ * 接收Resend webhook事件，记录邮件打开/点击/回复
  *
  * Resend webhook事件类型：
  * - email.delivered
@@ -9,6 +9,7 @@
  * - email.clicked
  * - email.bounced
  * - email.complained
+ * - email.replied
  */
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -42,6 +43,10 @@ export async function POST(req: NextRequest) {
 
       case 'email.bounced':
         await handleEmailBounced(data);
+        break;
+
+      case 'email.replied':
+        await handleEmailReplied(data);
         break;
 
       default:
@@ -179,6 +184,49 @@ async function handleEmailBounced(data: {
   await updateEmailLogStatus(data.email_id, 'bounced');
 }
 
+/**
+ * 处理邮件回复事件（断点4修复）
+ * 当客户回复邮件时，自动标记为已回复，并记录高意向意图信号
+ */
+async function handleEmailReplied(data: {
+  email_id: string;
+  from: string;
+  to: string[];
+  timestamp: string;
+  subject?: string;
+}): Promise<void> {
+  try {
+    const emailLog = await findEmailLog(data.email_id, data.to[0]);
+
+    if (!emailLog) {
+      console.log('[EmailTracking] Email log not found for reply:', data.email_id);
+      return;
+    }
+
+    // 记录高意向意图信号（回复是最强的购买信号）
+    await trackIntentSignal({
+      tenantId: emailLog.tenantId,
+      candidateId: emailLog.candidateId || undefined,
+      companyId: emailLog.companyId || undefined,
+      signalType: 'email_reply',
+      metadata: {
+        emailId: data.email_id,
+        from: data.from,
+        to: data.to,
+        subject: data.subject,
+      },
+      occurredAt: new Date(data.timestamp),
+    });
+
+    // 更新邮件日志状态为已回复
+    await updateEmailLogStatus(data.email_id, 'replied');
+
+    console.log('[EmailTracking] Email replied:', data.email_id, 'from:', data.from);
+  } catch (error) {
+    console.error('[EmailTracking] handleEmailReplied error:', error);
+  }
+}
+
 // ==================== 辅助函数 ====================
 
 /**
@@ -226,7 +274,7 @@ async function findEmailLog(emailId: string, _to: string): Promise<{
  */
 async function updateEmailLogStatus(
   emailId: string,
-  status: 'delivered' | 'opened' | 'clicked' | 'bounced'
+  status: 'delivered' | 'opened' | 'clicked' | 'bounced' | 'replied'
 ): Promise<void> {
   try {
     await prisma.outreachRecord.updateMany({
@@ -236,6 +284,7 @@ async function updateEmailLogStatus(
         updatedAt: new Date(),
         ...(status === 'opened' && { openedAt: new Date() }),
         ...(status === 'clicked' && { clickedAt: new Date() }),
+        ...(status === 'replied' && { repliedAt: new Date() }),
       },
     });
   } catch (error) {

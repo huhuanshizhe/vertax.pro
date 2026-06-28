@@ -61,6 +61,8 @@ interface CompanyProfileContext {
   targetIndustries: string[];
   targetRegions: string[];
   buyerPersonas: Array<{ role: string; title: string; concerns?: string[] }>;
+  techAdvantages: Array<{ title: string; description: string }>;
+  differentiators: Array<{ point: string; description: string }>;
 }
 
 const profileCache = new Map<string, { data: CompanyProfileContext; expiresAt: number }>();
@@ -84,7 +86,55 @@ async function loadCompanyProfile(tenantId: string): Promise<CompanyProfileConte
     targetIndustries: (profile.targetIndustries as string[]) || [],
     targetRegions: normalizeTargetRegions(profile.targetRegions),
     buyerPersonas: (profile.buyerPersonas as CompanyProfileContext['buyerPersonas']) || [],
+    techAdvantages: (profile.techAdvantages as CompanyProfileContext['techAdvantages']) || [],
+    differentiators: (profile.differentiators as CompanyProfileContext['differentiators']) || [],
   };
+
+  // 断点2修复：检查是否有 TargetingSpec artifact，如有则合并其行业/地区数据
+  try {
+    const targetingSpec = await prisma.artifactVersion.findFirst({
+      where: {
+        tenantId,
+        entityType: 'TargetingSpec',
+        status: { in: ['published', 'draft'] },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { content: true },
+    });
+
+    if (targetingSpec?.content) {
+      const spec = targetingSpec.content as {
+        targetingSpec?: {
+          segmentation?: {
+            firmographic?: { industries?: string[]; countries?: string[] };
+            technographic?: { keywords?: string[] };
+          };
+          exclusionRules?: { negativeKeywords?: string[] };
+        };
+      };
+
+      const seg = spec.targetingSpec?.segmentation;
+      if (seg?.firmographic?.industries?.length) {
+        // 合并：TargetingSpec 的行业补充到 CompanyProfile
+        const existing = new Set(ctx.targetIndustries.map(i => i.toLowerCase()));
+        for (const ind of seg.firmographic.industries) {
+          if (!existing.has(ind.toLowerCase())) {
+            ctx.targetIndustries.push(ind);
+          }
+        }
+      }
+      if (seg?.firmographic?.countries?.length) {
+        const existing = new Set(ctx.targetRegions.map(r => r.toLowerCase()));
+        for (const c of seg.firmographic.countries) {
+          if (!existing.has(c.toLowerCase())) {
+            ctx.targetRegions.push(c);
+          }
+        }
+      }
+    }
+  } catch {
+    // ArtifactVersion 表可能不存在，静默跳过
+  }
 
   profileCache.set(tenantId, { data: ctx, expiresAt: Date.now() + 10 * 60 * 1000 });
   return ctx;
@@ -107,6 +157,20 @@ function buildCompanyContext(profile: CompanyProfileContext): string {
       if (p.highlights?.length) {
         sections.push(`  亮点: ${p.highlights.join(', ')}`);
       }
+    }
+  }
+
+  if (profile.techAdvantages.length > 0) {
+    sections.push('\n【技术优势】');
+    for (const t of profile.techAdvantages) {
+      sections.push(`- ${t.title}: ${t.description}`);
+    }
+  }
+
+  if (profile.differentiators.length > 0) {
+    sections.push('\n【差异化卖点】');
+    for (const d of profile.differentiators) {
+      sections.push(`- ${d.point}: ${d.description}`);
     }
   }
 
