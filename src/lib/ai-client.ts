@@ -1004,29 +1004,48 @@ export async function analyzeCompanyProfile(
 }> {
   const combinedText = materialTexts.join("\n\n---\n\n");
 
+  if (combinedText.trim().length < 50) {
+    throw new Error("素材文本内容过少，无法生成企业画像。请上传更多文件或确认文件内容。");
+  }
+
   const truncatedText =
     combinedText.length > 60000
       ? combinedText.slice(0, 60000) + "\n...(内容已截断)"
       : combinedText;
 
-  const response = await chatCompletion(
-    [
-      { role: "system", content: COMPANY_PROFILE_SYSTEM_PROMPT },
+  let response: ChatCompletionResponse;
+  try {
+    response = await chatCompletion(
+      [
+        { role: "system", content: COMPANY_PROFILE_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `请分析以下企业资料，提炼企业能力画像：\n\n${truncatedText}`,
+        },
+      ],
       {
-        role: "user",
-        content: `请分析以下企业资料，提炼企业能力画像：\n\n${truncatedText}`,
-      },
-    ],
-    {
-      model: "qwen-plus",
-      temperature: 0.2,
-      maxTokens: 4096,
-    }
-  );
+        model: "qwen-plus",
+        temperature: 0.2,
+        maxTokens: 4096,
+      }
+    );
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error('[analyzeCompanyProfile] AI call failed:', msg);
+    throw new Error(`AI 分析调用失败: ${msg}。请检查 AI API Key 是否配置正确，或稍后重试。`);
+  }
+
+  if (!response.content || response.content.trim().length < 10) {
+    throw new Error("AI 返回内容为空，请重试。");
+  }
 
   let jsonStr = response.content.trim();
-  if (jsonStr.startsWith("```")) {
-    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, "").replace(/\s*```$/, "");
+  // 从 markdown 代码块中提取 JSON（支持 AI 在代码块前后加说明文字）
+  const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (codeBlockMatch) {
+    jsonStr = codeBlockMatch[1].trim();
+  } else if (jsonStr.startsWith("```")) {
+    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, "").trim();
   }
 
   const analysis = await parseCompanyProfileAnalysisResponse(jsonStr);
