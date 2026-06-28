@@ -116,13 +116,9 @@ export class ApolloOrganizationSearchAdapter implements RadarAdapter {
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
-        console.error(`[ApolloOrgSearch] API error ${response.status}: ${errText.slice(0, 300)}`);
-        return {
-          items: [],
-          total: 0,
-          hasMore: false,
-          metadata: { source: this.sourceCode, query, fetchedAt: new Date(), duration: Date.now() - startTime },
-        };
+        const errorMsg = `Apollo API error ${response.status}: ${errText.slice(0, 300)}`;
+        console.error(`[ApolloOrgSearch] ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       const data: ApolloOrgSearchResponse = await response.json();
@@ -151,13 +147,9 @@ export class ApolloOrganizationSearchAdapter implements RadarAdapter {
       };
     } catch (error) {
       const duration = Date.now() - startTime;
-      console.error('[ApolloOrgSearch] Search error:', error);
-      return {
-        items: [],
-        total: 0,
-        hasMore: false,
-        metadata: { source: this.sourceCode, query, fetchedAt: new Date(), duration },
-      };
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[ApolloOrgSearch] Search error:', errorMsg);
+      throw error; // 重新抛出错误，让调用方知道失败了
     }
   }
 

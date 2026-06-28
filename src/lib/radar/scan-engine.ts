@@ -67,6 +67,8 @@ export async function runIncrementalScan(
     exhausted: false,
   };
 
+  let task: { id: string } | null = null;
+
   try {
     // 1. 加载 Profile + Source
     const profile = await prisma.radarSearchProfile.findUnique({
@@ -193,7 +195,7 @@ export async function runIncrementalScan(
     };
 
     // 6. 创建审计用 RadarTask
-    const task = await prisma.radarTask.create({
+    task = await prisma.radarTask.create({
       data: {
         tenantId: updatedProfile.tenantId,
         name: `Auto-scan: ${updatedProfile.name} × ${source.name} [${currentKeyword}×${currentCountry}]`,
@@ -263,7 +265,7 @@ export async function runIncrementalScan(
         const batch = batchItems.slice(i, i + BATCH_SIZE);
         try {
           const results = await Promise.all(
-            batch.map(item => processCandidateUpsert(updatedProfile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy))
+            batch.map(item => processCandidateUpsert(updatedProfile.tenantId, sourceId, task!.id, profileId, item, source.ttlDays, source.storagePolicy))
           );
           for (const r of results) {
             if (r === 'created') stats.created++;
@@ -275,7 +277,7 @@ export async function runIncrementalScan(
           // 降级为逐条处理，尽量保留数据
           for (const item of batch) {
             try {
-              const r = await processCandidateUpsert(updatedProfile.tenantId, sourceId, task.id, profileId, item, source.ttlDays, source.storagePolicy);
+              const r = await processCandidateUpsert(updatedProfile.tenantId, sourceId, task!.id, profileId, item, source.ttlDays, source.storagePolicy);
               if (r === 'created') stats.created++;
               else stats.duplicates++;
             } catch (e2) {
@@ -361,11 +363,97 @@ export async function runIncrementalScan(
       },
     });
 
+    // 9. 自动触发富化（如果有新创建的候选）
+    if (stats.created > 0) {
+      try {
+        // 查询需要富化的候选（A/B 级且没有联系人信息）
+        const candidatesToEnrich = await prisma.radarCandidate.findMany({
+          where: {
+            taskId: task.id,
+            status: 'NEW',
+            qualifyTier: { in: ['A', 'B'] },
+            OR: [
+              { email: null },
+              { phone: null },
+              { website: null },
+            ],
+          },
+          select: { id: true },
+          take: 10, // 最多触发 10 个候选的富化
+        });
+
+        if (candidatesToEnrich.length > 0) {
+          // 标记为待富化状态
+          await prisma.radarCandidate.updateMany({
+            where: {
+              id: { in: candidatesToEnrich.map(c => c.id) },
+            },
+            data: {
+              status: 'ENRICHING',
+            },
+          });
+
+          console.log(`[scan-engine] Triggered enrichment for ${candidatesToEnrich.length} candidates`);
+
+          // TODO: 这里应该触发异步富化任务
+          // 当前版本暂时不实现，因为富化流程比较复杂，需要单独的任务队列
+          // 未来可以集成 cron job 或消息队列来处理
+        }
+
+        // 10. 自动触发评分（对所有新创建的候选）
+        const candidatesToScore = await prisma.radarCandidate.findMany({
+          where: {
+            taskId: task.id,
+            status: 'NEW',
+            qualifyTier: null, // 还没有评分
+          },
+          select: { id: true },
+          take: 20, // 最多触发 20 个候选的评分
+        });
+
+        if (candidatesToScore.length > 0) {
+          console.log(`[scan-engine] Triggered scoring for ${candidatesToScore.length} candidates`);
+
+          // TODO: 这里应该触发异步评分任务
+          // 可以调用 radar-qualify cron 或者创建专门的评分任务
+          // 当前版本先不实现，因为评分需要调用 AI，成本较高
+          // 建议通过 cron job 定期批量处理
+        }
+      } catch (enrichError) {
+        console.warn('[scan-engine] Failed to trigger enrichment/scoring:', enrichError);
+        // 不影响主流程
+      }
+    }
+
     return stats;
   } catch (error) {
     stats.duration = Date.now() - startTime;
     const errorMessage = error instanceof Error ? error.message : 'Unknown error';
     stats.errors.push(errorMessage);
+
+    // 更新任务状态为 FAILED
+    if (task) {
+      try {
+        await prisma.radarTask.update({
+          where: { id: task.id },
+          data: {
+            status: 'FAILED',
+            completedAt: new Date(),
+            errorMessage,
+            stats: {
+              fetched: stats.fetched,
+              created: stats.created,
+              duplicates: stats.duplicates,
+              errors: stats.errors,
+              duration: stats.duration,
+            } as object,
+          },
+        });
+      } catch (updateError) {
+        console.error('[scan-engine] Failed to update task status:', updateError);
+      }
+    }
+
     return stats;
   }
 }

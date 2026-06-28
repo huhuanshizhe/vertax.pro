@@ -151,8 +151,8 @@ export async function runRadarTask(taskId: string): Promise<SyncResult> {
 
       // 执行搜索（带超时保护）
       const searchPromise = adapter.search({ ...query, page });
-      const searchTimeout = new Promise<never>((_, reject) => 
-        setTimeout(() => reject(new Error(`Google Places search timed out after ${GLOBAL_TIMEOUT_MS/1000}s`)), 
+      const searchTimeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`${adapter.sourceCode} search timed out after ${GLOBAL_TIMEOUT_MS/1000}s`)),
         Math.max(1000, GLOBAL_TIMEOUT_MS - (Date.now() - startTime) - 10000))
       );
       const result = await Promise.race([searchPromise, searchTimeout]);
