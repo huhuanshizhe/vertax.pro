@@ -9,7 +9,8 @@ import {
 } from "@/lib/knowledge/company-profile-analysis";
 
 // Pro plan: OSS download + AI analysis can take 60s+
-export const maxDuration = 60;
+// Increased to 180s to handle large documents (up to 60k chars)
+export const maxDuration = 180;
 
 /**
  * POST /api/knowledge/analyze-assets
@@ -80,10 +81,12 @@ export async function POST(request: NextRequest) {
       : '';
 
     // 调用 AI 分析（将已探索信息追加到第一个文本块末尾）
+    // 设置 150 秒超时，配合 maxDuration=180s
     const { analysis, model } = await analyzeCompanyProfile(
       context.sections.map((section, index) =>
         index === 0 ? section + exploredContext : section,
-      )
+      ),
+      { timeout: 150, maxChars: 30000 }
     );
 
     console.log(`[analyze-assets] AI analysis completed, model: ${model}`);
