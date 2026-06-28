@@ -205,8 +205,14 @@ export default function RadarSearchPage() {
   const segmentation = targetingSpec?.segmentation;
   const activeProfiles = profiles.filter((profile) => profile.isActive);
   const pausedProfiles = profiles.filter((profile) => !profile.isActive);
-  const latestTask = tasks[0];
-  const latestTaskStats = parseTaskStats(latestTask?.stats);
+
+  // 找到最新的已完成或失败的任务（跳过 RUNNING 状态）
+  const latestCompletedTask = tasks.find(t => t.status === 'COMPLETED' || t.status === 'FAILED');
+  const latestTaskStats = parseTaskStats(latestCompletedTask?.stats);
+
+  // 检查是否有正在运行的任务
+  const runningTask = tasks.find(t => t.status === 'RUNNING');
+
   const effectiveQuery = useMemo(() => buildQuery(targetingSpec, preferences), [preferences, targetingSpec]);
   const canStartSearch = hasQueryScope(effectiveQuery);
   const searchStarted = Boolean(pipeline?.counts.lastScanAt || pipeline?.counts.profilesActiveCount);
@@ -530,14 +536,34 @@ export default function RadarSearchPage() {
       <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
         <SectionHeader eyebrow="搜索进展" title="当前搜索状态" description="查看系统最近发现了多少公司，以及哪些结果值得跟进。" />
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-6">
-          <MetricCard label="自动搜索状态" value={searchProgress ? "搜索中…" : searchStarted ? "已启动" : "未启动"} />
-          <MetricCard label="最近运行" value={formatRelative(pipeline?.counts.lastScanAt || null)} />
+          <MetricCard
+            label="自动搜索状态"
+            value={
+              runningTask
+                ? "搜索中…"
+                : latestCompletedTask
+                  ? latestCompletedTask.status === 'COMPLETED'
+                    ? "已完成"
+                    : "有错误"
+                  : searchStarted
+                    ? "已启动"
+                    : "未启动"
+            }
+          />
+          <MetricCard label="最近运行" value={formatRelative(latestCompletedTask?.completedAt || pipeline?.counts.lastScanAt || null)} />
           <MetricCard label="本轮抓取" value={latestTaskStats?.fetched ?? "—"} />
           <MetricCard label="去重数量" value={latestTaskStats?.duplicates ?? "—"} />
           <MetricCard label="新发现" value={pipeline?.counts.pendingReviewCount ?? stats?.newCandidates ?? 0} />
           <MetricCard label="已跟进线索" value={pipeline?.counts.prospectCompanyCount ?? stats?.companies ?? 0} />
         </div>
-        {searchProgress ? (
+        {runningTask && !searchProgress ? (
+          <div className="mt-4 rounded-xl border border-[var(--ci-accent)]/30 bg-[var(--ci-accent)]/5 px-4 py-3">
+            <div className="flex items-center gap-2 text-sm font-medium text-[var(--ci-accent)]">
+              <Loader2 size={16} className="animate-spin" />
+              正在搜索: {runningTask.name || "自动搜索任务"}
+            </div>
+          </div>
+        ) : searchProgress ? (
           <div className="mt-4 rounded-xl border border-[var(--ci-accent)]/30 bg-[var(--ci-accent)]/5 px-4 py-3">
             <div className="flex items-center gap-2 text-sm font-medium text-[var(--ci-accent)]">
               <Loader2 size={16} className="animate-spin" />
@@ -616,14 +642,34 @@ export default function RadarSearchPage() {
       <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
         <section className="rounded-xl border border-[var(--ci-border)] bg-[#FFFFFF] p-6">
 <SectionHeader eyebrow="最近活动" title="最近发生了什么" description="查看系统最近完成的搜索、补全和推荐动作。" />
-          {tasks.length ? (
+          {tasks.filter(t => t.status !== 'RUNNING').length ? (
             <div className="space-y-3">
-              {tasks.slice(0, 5).map((task) => (
-                <div key={task.id} className="rounded-xl border border-[var(--ci-border)] bg-[var(--ci-surface-muted)] px-4 py-4">
-                  <div className="flex items-start justify-between gap-3"><div><div className="text-sm font-semibold text-[#0B1B2B]">{task.name || "自动搜索任务"}</div><div className="mt-1 text-xs text-slate-500">{formatTaskStatus(task.status)} · {task.source.name}</div></div><div className="text-xs text-slate-400">{formatRelative(task.completedAt ?? task.startedAt ?? task.createdAt)}</div></div>
-                  {parseTaskStats(task.stats) ? <div className="mt-3 flex flex-wrap gap-2 text-xs">{renderTaskBadge("抓取", parseTaskStats(task.stats)?.fetched)}{renderTaskBadge("新增", parseTaskStats(task.stats)?.created)}{renderTaskBadge("去重", parseTaskStats(task.stats)?.duplicates)}</div> : null}
-                </div>
-              ))}
+              {tasks.filter(t => t.status !== 'RUNNING').slice(0, 5).map((task) => {
+                const taskStats = parseTaskStats(task.stats);
+                return (
+                  <div key={task.id} className="rounded-xl border border-[var(--ci-border)] bg-[var(--ci-surface-muted)] px-4 py-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-[#0B1B2B]">{task.name || "自动搜索任务"}</div>
+                        <div className="mt-1 text-xs text-slate-500">
+                          {formatTaskStatus(task.status)} · {task.source.name}
+                          {taskStats && (
+                            <span className="ml-2">
+                              · 抓取 {taskStats.fetched ?? 0} · 新增 {taskStats.created ?? 0}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="text-xs text-slate-400">{formatRelative(task.completedAt ?? task.startedAt ?? task.createdAt)}</div>
+                    </div>
+                    {task.errorMessage && (
+                      <div className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                        错误: {task.errorMessage.slice(0, 100)}{task.errorMessage.length > 100 ? '...' : ''}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <EmptyCard title="还没有自动搜索活动" description="当你开始自动搜索后，这里会按时间线展示系统执行过什么。" />
