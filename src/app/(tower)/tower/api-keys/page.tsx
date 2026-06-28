@@ -236,27 +236,24 @@ export default function TowerApiKeysPage() {
   const testConnection = async (service: string) => {
     setTesting(service);
     try {
-      // 调用健康检查端点测试连接
-      const response = await fetch("/api/admin/api-health");
-      if (response.ok) {
-        const data = await response.json();
-        const health = data.apis?.find((api: ApiHealthStatus) => api.code === service);
+      // 调用测试端点真正测试 API 连接
+      const response = await fetch("/api/admin/api-keys/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ service }),
+      });
 
-        if (health?.isConfigured) {
-          if (health.todayUsage.errors === 0) {
-            toast.success(`${service} 连接正常，今日调用 ${health.todayUsage.calls} 次`);
-          } else {
-            toast.warning(`${service} 连接正常，但有 ${health.todayUsage.errors} 个错误`);
-          }
-          // 刷新健康数据
-          await loadHealthData();
-        } else {
-          toast.error(`${service} 未配置或连接失败`);
-        }
+      const data = await response.json();
+
+      if (data.success) {
+        toast.success(`${service} 连接成功 (${data.latency})`);
+        // 刷新健康数据
+        await loadHealthData();
       } else {
-        toast.error("测试连接失败");
+        toast.error(`${service} 连接失败: ${data.error || '未知错误'}`);
       }
-    } catch {
+    } catch (error) {
+      console.error("Test connection error:", error);
       toast.error("测试连接失败");
     } finally {
       setTesting(null);
@@ -307,6 +304,30 @@ export default function TowerApiKeysPage() {
   const getConfig = (service: string) =>
     configs.find((c) => c.service === service);
 
+  // 获取环境变量名称
+  const getEnvVarName = (service: string): string => {
+    const envVarMap: Record<string, string> = {
+      dashscope: "TEXT_API_KEY",
+      openrouter: "OPENROUTER_API_KEY",
+      gemini: "GEMINI_API_KEY",
+      brave_search: "BRAVE_SEARCH_API_KEY",
+      tavily: "TAVILY_API_KEY",
+      exa: "EXA_API_KEY",
+      firecrawl: "FIRECRAWL_API_KEY",
+      serper: "SERPER_API_KEY",
+      serpapi: "SERPAPI_API_KEY",
+      google_places: "GOOGLE_MAPS_API_KEY",
+      hunter: "HUNTER_API_KEY",
+      pdl: "PDL_API_KEY",
+      apollo: "APOLLO_API_KEY",
+      skrapp: "SKRAPP_API_KEY",
+      sam_gov: "SAM_GOV_API_KEY",
+      ungm: "UNGM_CLIENT_ID",
+      resend: "RESEND_API_KEY",
+    };
+    return envVarMap[service] || "未知";
+  };
+
   const grouped = SERVICE_CONFIGS.reduce((acc, s) => {
     if (!acc[s.category]) acc[s.category] = [];
     acc[s.category].push(s);
@@ -349,7 +370,12 @@ export default function TowerApiKeysPage() {
               const getKeyPreview = () => {
                 if (!config?.apiKey || config.apiKey === "************") {
                   if (health?.isConfigured) {
-                    return `已配置 (${health.todayUsage.calls} 次调用)`;
+                    // 显示环境变量名称和状态
+                    const envVar = getEnvVarName(sc.service);
+                    if (health.todayUsage.calls > 0) {
+                      return `✓ 已配置 (${envVar}) - 今日 ${health.todayUsage.calls} 次调用`;
+                    }
+                    return `✓ 已配置 (${envVar}) - 等待首次调用`;
                   }
                   return null;
                 }
