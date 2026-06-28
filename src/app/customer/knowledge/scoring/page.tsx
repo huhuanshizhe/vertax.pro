@@ -63,6 +63,23 @@ export default function ScoringProfilePage() {
             返回买家画像
           </Link>
 
+          {/* Auto-generation Notice */}
+          <div
+            className="mb-6 p-4 rounded-xl"
+            style={{ background: 'rgba(34,197,94,0.04)', border: '1px solid rgba(34,197,94,0.15)' }}
+          >
+            <div className="flex items-start gap-3">
+              <Zap size={18} style={{ color: '#22C55E' }} className="shrink-0 mt-0.5" />
+              <div>
+                <p className="text-sm font-semibold text-white mb-1.5">✨ 智能生成</p>
+                <p className="text-xs" style={{ color: 'rgba(255,255,255,0.6)' }}>
+                  评分规则已根据您的<strong className="text-white/80">企业画像</strong>自动生成。AI 分析了您的核心产品、技术优势和目标行业，为您量身定制了评分规则。
+                  您可以在此基础上手动调整，以更精确地匹配您的需求。
+                </p>
+              </div>
+            </div>
+          </div>
+
           {/* Quick Tips */}
           <div className="grid grid-cols-3 gap-4 mb-8">
             <div
@@ -111,10 +128,10 @@ export default function ScoringProfilePage() {
             <div className="flex items-start gap-3">
               <Info size={18} style={{ color: 'var(--ci-accent)' }} className="shrink-0 mt-0.5" />
               <div>
-                <p className="text-sm font-semibold text-white mb-1.5">为什么要配置评分规则？</p>
+                <p className="text-sm font-semibold text-white mb-1.5">如何优化评分规则？</p>
                 <ul className="space-y-1 text-xs" style={{ color: 'rgba(255,255,255,0.5)' }}>
-                  <li>• <strong className="text-white/70">精准匹配</strong>：您最了解自己的目标客户，自定义规则比AI猜测更准确</li>
-                  <li>• <strong className="text-white/70">排除无效</strong>：排除零售商、供应商等非目标客户，节省筛选时间</li>
+                  <li>• <strong className="text-white/70">基于画像生成</strong>：AI 根据您的企业画像自动生成初始规则，您也可以手动调整</li>
+                  <li>• <strong className="text-white/70">排除无效客户</strong>：添加负向信号排除零售商、竞争对手等非目标客户</li>
                   <li>• <strong className="text-white/70">持续优化</strong>：根据获客效果不断调整规则，提升匹配精度</li>
                 </ul>
               </div>

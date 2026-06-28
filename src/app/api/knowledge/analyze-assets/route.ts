@@ -7,6 +7,7 @@ import {
   buildCompanyProfileAnalysisContext,
   getCompanyProfileAnalysisAssets,
 } from "@/lib/knowledge/company-profile-analysis";
+import { generateScoringProfile } from "@/lib/knowledge/generate-scoring-profile";
 
 // Pro plan: OSS download + AI analysis can take 60s+
 // Increased to 180s to handle large documents (up to 60k chars)
@@ -143,6 +144,53 @@ export async function POST(request: NextRequest) {
       },
     });
 
+    // 基于企业画像自动生成评分配置
+    let scoringProfileGenerated = false;
+    try {
+      const scoringProfile = await generateScoringProfile({
+        companyName: profile.companyName,
+        companyIntro: profile.companyIntro,
+        coreProducts: profile.coreProducts,
+        techAdvantages: profile.techAdvantages,
+        targetIndustries: profile.targetIndustries,
+        buyerPersonas: profile.buyerPersonas,
+      });
+
+      // 查找或创建 ICP Segment
+      let segment = await db.iCPSegment.findFirst({
+        where: { tenantId },
+        orderBy: { order: 'asc' },
+      });
+
+      if (!segment) {
+        segment = await db.iCPSegment.create({
+          data: {
+            tenantId,
+            name: '默认客户细分',
+            criteria: {},
+            order: 0,
+          },
+        });
+      }
+
+      // 保存评分配置到 ICP Segment
+      await db.iCPSegment.update({
+        where: { id: segment.id },
+        data: {
+          criteria: {
+            ...(segment.criteria as object || {}),
+            scoringProfile: scoringProfile as any,
+          },
+        },
+      });
+
+      scoringProfileGenerated = true;
+      console.log('[analyze-assets] Scoring profile generated successfully');
+    } catch (scoringError) {
+      // 评分配置生成失败不影响主流程
+      console.warn('[analyze-assets] Failed to generate scoring profile:', scoringError);
+    }
+
     return NextResponse.json({
       ok: true,
       selection: {
@@ -178,6 +226,7 @@ export async function POST(request: NextRequest) {
         createdAt: profile.createdAt,
         updatedAt: profile.updatedAt,
       },
+      scoringProfileGenerated,
     });
   } catch (error) {
     const msg = error instanceof Error ? error.message : "Internal server error";
