@@ -541,11 +541,36 @@ export const aiClient = {
 };
 
 function stripCodeFences(content: string): string {
-  return content
-    .trim()
-    .replace(/^```(?:json)?\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
+  let result = content.trim();
+
+  // 移除开头的 markdown 代码围栏
+  result = result.replace(/^```(?:json)?\s*\n?/i, "");
+
+  // 移除结尾的 markdown 代码围栏
+  result = result.replace(/\n?```\s*$/i, "");
+
+  // 如果内容中有 JSON 对象/数组，尝试提取第一个完整的 JSON 块
+  // 这处理 AI 在 JSON 前加说明文字的情况，如 "Analysis result:\n{...}"
+  const objectStart = result.indexOf("{");
+  const arrayStart = result.indexOf("[");
+
+  if (objectStart >= 0 || arrayStart >= 0) {
+    // 找到第一个 { 或 [ 的位置
+    const jsonStart = objectStart >= 0 && arrayStart >= 0
+      ? Math.min(objectStart, arrayStart)
+      : Math.max(objectStart, arrayStart);
+
+    // 如果 JSON 不是从开头开始，说明前面有说明文字，提取 JSON 部分
+    if (jsonStart > 0) {
+      const jsonContent = result.slice(jsonStart);
+      // 验证提取的内容看起来像 JSON（以 { 或 [ 开头）
+      if (jsonContent.trim().startsWith("{") || jsonContent.trim().startsWith("[")) {
+        result = jsonContent;
+      }
+    }
+  }
+
+  return result.trim();
 }
 
 function extractBalancedJsonBlock(content: string): string | null {
@@ -1040,12 +1065,29 @@ export async function analyzeCompanyProfile(
   }
 
   let jsonStr = response.content.trim();
+
   // 从 markdown 代码块中提取 JSON（支持 AI 在代码块前后加说明文字）
   const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
     jsonStr = codeBlockMatch[1].trim();
-  } else if (jsonStr.startsWith("```")) {
-    jsonStr = jsonStr.replace(/^```(?:json)?\s*/, "").trim();
+  } else {
+    // 没有代码围栏，尝试提取 JSON 对象/数组
+    // 处理 AI 在 JSON 前加说明文字的情况，如 "Analysis:\n{...}"
+    const objectStart = jsonStr.indexOf("{");
+    const arrayStart = jsonStr.indexOf("[");
+
+    if (objectStart >= 0 || arrayStart >= 0) {
+      const jsonStart = objectStart >= 0 && arrayStart >= 0
+        ? Math.min(objectStart, arrayStart)
+        : Math.max(objectStart, arrayStart);
+
+      if (jsonStart > 0) {
+        const jsonContent = jsonStr.slice(jsonStart);
+        if (jsonContent.trim().startsWith("{") || jsonContent.trim().startsWith("[")) {
+          jsonStr = jsonContent;
+        }
+      }
+    }
   }
 
   const analysis = await parseCompanyProfileAnalysisResponse(jsonStr);
