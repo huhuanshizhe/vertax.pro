@@ -78,7 +78,7 @@ export class AISearchAdapter implements RadarAdapter {
   private workspaceId?: string; // 用于积分扣除
 
   constructor(config: AdapterConfig & { workspaceId?: string }) {
-    this.timeout = config.timeout || 60000;
+    this.timeout = config.timeout || 30000; // 降低超时时间到 30 秒，避免超时
     this.searchApiKey = config.apiKey || process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY || process.env.BRAVE_SEARCH_API_KEY;
     this.workspaceId = config.workspaceId;
   }
@@ -242,39 +242,45 @@ export class AISearchAdapter implements RadarAdapter {
   ): Promise<Array<{ query: GeneratedQuery; items: WebSearchResult[] }>> {
     const results: Array<{ query: GeneratedQuery; items: WebSearchResult[] }> = [];
     const targetCountry = normalizeCountryCode(originalQuery.countries?.[0]);
-    
-    // 限制并发数
-    const limitedQueries = queries.slice(0, 3);
-    
-    for (const q of limitedQueries) {
+
+    // 限制并发数，但增加每批的查询数
+    const limitedQueries = queries.slice(0, 5); // 增加到 5 个查询
+
+    // 并行执行所有搜索查询（而不是串行）
+    const searchPromises = limitedQueries.map(async (q) => {
       try {
         let items: WebSearchResult[] = [];
-        
+
         if (!process.env.SERPAPI_KEY && !process.env.SERPAPI_API_KEY && !process.env.BRAVE_SEARCH_API_KEY) {
           console.warn('No search API key configured');
-          continue;
+          return { query: q, items: [] };
         }
+
         // 并行调用 SerpAPI（主）+ Brave（补充），合并去重
         const [serpItems, braveItems] = await Promise.allSettled([
           (process.env.SERPAPI_KEY || process.env.SERPAPI_API_KEY) ? this.searchWithSerpAPI(q.query, targetCountry) : Promise.resolve([]),
           process.env.BRAVE_SEARCH_API_KEY ? this.searchWithBrave(q.query, targetCountry) : Promise.resolve([]),
         ]);
+
         const serpResults = serpItems.status === 'fulfilled' ? serpItems.value : [];
         const braveResults = braveItems.status === 'fulfilled' ? braveItems.value : [];
+
         // 以 link 为 key 去重，SerpAPI 结果优先
         const seen = new Set(serpResults.map(r => r.link));
         const merged = [...serpResults, ...braveResults.filter(r => !seen.has(r.link))];
         items = merged;
-        
-        results.push({ query: q, items });
-        
-        // 速率限制
-        await new Promise(r => setTimeout(r, 1000));
+
+        return { query: q, items };
       } catch (error) {
         console.error(`Search failed for query "${q.query}":`, error);
+        return { query: q, items: [] };
       }
-    }
-    
+    });
+
+    // 等待所有搜索完成
+    const allResults = await Promise.all(searchPromises);
+    results.push(...allResults);
+
     return results;
   }
 
@@ -412,7 +418,7 @@ export class AISearchAdapter implements RadarAdapter {
 3. sourceUrl 必须是原始搜索结果中的 link`;
 
     const userPrompt = `搜索结果：
-${JSON.stringify(allItems.slice(0, 15).map(item => ({
+${JSON.stringify(allItems.slice(0, 30).map(item => ({
   title: item.title,
   snippet: item.snippet,
   link: item.link,
@@ -430,6 +436,7 @@ ${JSON.stringify(allItems.slice(0, 15).map(item => ({
         {
           model: 'qwen-plus',
           temperature: 0.2,
+          maxTokens: 2048,
         }
       );
 
@@ -448,11 +455,28 @@ ${JSON.stringify(allItems.slice(0, 15).map(item => ({
         }
       }
       const tenders = parsed2.tenders || [];
-      
+
       return tenders.map((t: Record<string, unknown>, idx: number) => this.normalizeAIResult(t, idx, originalQuery));
     } catch (error) {
       console.error('Failed to parse search results:', error);
-      return [];
+      // 降级：直接返回搜索结果作为候选（不做 AI 解析）
+      return allItems.slice(0, 10).map((item, idx) => ({
+        externalId: `ai_${idx}_${this.hashUrl(item.link)}`,
+        sourceUrl: item.link,
+        displayName: item.title,
+        candidateType: 'OPPORTUNITY' as const,
+        description: item.snippet,
+        matchExplain: {
+          channel: 'ai_search',
+          query: originalQuery.keywords?.join(' '),
+          reasons: ['AI 搜索发现（未解析）'],
+        },
+        rawData: {
+          source: 'ai_search',
+          originalData: item,
+          searchKeywords: originalQuery.keywords,
+        },
+      }));
     }
   }
 
