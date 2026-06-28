@@ -236,7 +236,23 @@ export async function runIncrementalScan(
         },
       };
 
-      const result = await adapter.search(queryWithCursor);
+      // 添加超时保护（单个搜索最多 30 秒）
+      const SEARCH_TIMEOUT_MS = 30000;
+      const searchPromise = adapter.search(queryWithCursor);
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error(`Search timeout after ${SEARCH_TIMEOUT_MS/1000}s`)), SEARCH_TIMEOUT_MS)
+      );
+
+      let result;
+      try {
+        result = await Promise.race([searchPromise, timeoutPromise]);
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : 'Search failed';
+        stats.errors.push(`[${source.code}] ${errMsg}`);
+        console.error(`[scan-engine] Search failed for ${source.code}:`, errMsg);
+        break; // 搜索失败，退出循环
+      }
+
       stats.fetched += result.items.length;
 
       // 批量收集并处理候选人（减少 N+1 数据库调用）
@@ -366,19 +382,15 @@ export async function runIncrementalScan(
     // 9. 自动触发富化（如果有新创建的候选）
     if (stats.created > 0) {
       try {
-        // 查询需要富化的候选（A/B 级且没有联系人信息）
+        // 查询需要富化的候选（没有邮箱的候选）
         const candidatesToEnrich = await prisma.radarCandidate.findMany({
           where: {
             taskId: task.id,
             status: 'NEW',
-            qualifyTier: { in: ['A', 'B'] },
-            OR: [
-              { email: null },
-              { phone: null },
-              { website: null },
-            ],
+            email: null, // 没有邮箱
+            website: { not: null }, // 有网站才能富化
           },
-          select: { id: true },
+          select: { id: true, displayName: true, website: true, country: true, industry: true },
           take: 10, // 最多触发 10 个候选的富化
         });
 
@@ -393,34 +405,53 @@ export async function runIncrementalScan(
             },
           });
 
-          console.log(`[scan-engine] Triggered enrichment for ${candidatesToEnrich.length} candidates`);
+          console.log(`[scan-engine] Starting enrichment for ${candidatesToEnrich.length} candidates`);
 
-          // TODO: 这里应该触发异步富化任务
-          // 当前版本暂时不实现，因为富化流程比较复杂，需要单独的任务队列
-          // 未来可以集成 cron job 或消息队列来处理
+          // 异步执行富化（不阻塞主流程）
+          setImmediate(async () => {
+            for (const candidate of candidatesToEnrich) {
+              try {
+                await enrichCandidateEmail(candidate.id);
+              } catch (error) {
+                console.error(`[scan-engine] Failed to enrich candidate ${candidate.id}:`, error);
+                // 更新状态为失败
+                await prisma.radarCandidate.update({
+                  where: { id: candidate.id },
+                  data: { status: 'NEW' }, // 恢复为 NEW，下次再试
+                });
+              }
+            }
+          });
         }
 
-        // 10. 自动触发评分（对所有新创建的候选）
-        const candidatesToScore = await prisma.radarCandidate.findMany({
+        // 10. 自动导入有邮箱的候选到线索库
+        const candidatesToImport = await prisma.radarCandidate.findMany({
           where: {
             taskId: task.id,
-            status: 'NEW',
-            qualifyTier: null, // 还没有评分
+            status: { in: ['NEW', 'ENRICHING'] },
+            email: { not: null }, // 有邮箱
+            importedToId: null, // 还没有导入
           },
           select: { id: true },
-          take: 20, // 最多触发 20 个候选的评分
+          take: 20,
         });
 
-        if (candidatesToScore.length > 0) {
-          console.log(`[scan-engine] Triggered scoring for ${candidatesToScore.length} candidates`);
+        if (candidatesToImport.length > 0) {
+          console.log(`[scan-engine] Auto-importing ${candidatesToImport.length} candidates with emails`);
 
-          // TODO: 这里应该触发异步评分任务
-          // 可以调用 radar-qualify cron 或者创建专门的评分任务
-          // 当前版本先不实现，因为评分需要调用 AI，成本较高
-          // 建议通过 cron job 定期批量处理
+          // 异步执行导入
+          setImmediate(async () => {
+            for (const candidate of candidatesToImport) {
+              try {
+                await autoImportCandidate(candidate.id);
+              } catch (error) {
+                console.error(`[scan-engine] Failed to auto-import candidate ${candidate.id}:`, error);
+              }
+            }
+          });
         }
       } catch (enrichError) {
-        console.warn('[scan-engine] Failed to trigger enrichment/scoring:', enrichError);
+        console.warn('[scan-engine] Failed to trigger enrichment/import:', enrichError);
         // 不影响主流程
       }
     }
@@ -459,6 +490,180 @@ export async function runIncrementalScan(
 }
 
 // ==================== 候选处理（upsert 去重） ====================
+
+/**
+ * 富化候选邮箱
+ * 使用 Exa 搜索决策者邮箱
+ */
+async function enrichCandidateEmail(candidateId: string): Promise<void> {
+  const candidate = await prisma.radarCandidate.findUnique({
+    where: { id: candidateId },
+    select: {
+      id: true,
+      displayName: true,
+      website: true,
+      country: true,
+      industry: true,
+      tenantId: true,
+    },
+  });
+
+  if (!candidate || !candidate.website) {
+    console.log(`[enrichCandidateEmail] Candidate ${candidateId} has no website, skipping`);
+    return;
+  }
+
+  try {
+    // 使用 Exa 搜索决策者邮箱
+    const { enrichCandidateWithExa } = await import('./exa-enrich');
+    const enrichment = await enrichCandidateWithExa(
+      candidate.displayName,
+      candidate.country,
+      candidate.industry
+    );
+
+    // 提取邮箱
+    const email = enrichment.email;
+
+    if (email) {
+      // 更新候选邮箱
+      await prisma.radarCandidate.update({
+        where: { id: candidateId },
+        data: {
+          email,
+          status: 'NEW', // 恢复为 NEW
+        },
+      });
+
+      console.log(`[enrichCandidateEmail] Found email for ${candidate.displayName}: ${email}`);
+
+      // 自动导入到线索库
+      await autoImportCandidate(candidateId);
+    } else {
+      // 没有找到邮箱，恢复状态
+      await prisma.radarCandidate.update({
+        where: { id: candidateId },
+        data: { status: 'NEW' },
+      });
+      console.log(`[enrichCandidateEmail] No email found for ${candidate.displayName}`);
+    }
+  } catch (error) {
+    console.error(`[enrichCandidateEmail] Failed to enrich ${candidateId}:`, error);
+    // 恢复状态，下次再试
+    await prisma.radarCandidate.update({
+      where: { id: candidateId },
+      data: { status: 'NEW' },
+    });
+    throw error;
+  }
+}
+
+/**
+ * 自动导入候选到线索库
+ */
+async function autoImportCandidate(candidateId: string): Promise<void> {
+  const candidate = await prisma.radarCandidate.findUnique({
+    where: { id: candidateId },
+    include: { source: true },
+  });
+
+  if (!candidate || !candidate.email || candidate.importedToId) {
+    return; // 没有邮箱或已导入
+  }
+
+  try {
+    // 检查是否已存在相同邮箱的线索
+    const existingCompany = await prisma.prospectCompany.findFirst({
+      where: {
+        tenantId: candidate.tenantId,
+        OR: [
+          { email: candidate.email },
+          { website: candidate.website || undefined },
+        ],
+      },
+    });
+
+    let companyId: string;
+
+    if (existingCompany) {
+      // 更新现有公司
+      companyId = existingCompany.id;
+      await prisma.prospectCompany.update({
+        where: { id: companyId },
+        data: {
+          email: candidate.email,
+          phone: candidate.phone || existingCompany.phone,
+          sourceCandidateId: candidate.id,
+        },
+      });
+    } else {
+      // 创建新公司
+      const company = await prisma.prospectCompany.create({
+        data: {
+          tenantId: candidate.tenantId,
+          name: candidate.displayName,
+          website: candidate.website,
+          email: candidate.email,
+          phone: candidate.phone,
+          country: candidate.country,
+          city: candidate.city,
+          industry: candidate.industry,
+          description: candidate.description,
+          tier: candidate.qualifyTier || 'B',
+          sourceType: candidate.source.channelType.toLowerCase(),
+          sourceCandidateId: candidate.id,
+          sourceUrl: candidate.sourceUrl,
+          status: 'new',
+          enrichmentStatus: 'COMPLETED',
+        },
+      });
+      companyId = company.id;
+    }
+
+    // 创建联系人
+    if (candidate.email) {
+      // 检查是否已存在相同邮箱的联系人
+      const existingContact = await prisma.prospectContact.findFirst({
+        where: {
+          companyId,
+          email: candidate.email,
+        },
+      });
+
+      if (!existingContact) {
+        await prisma.prospectContact.create({
+          data: {
+            tenantId: candidate.tenantId,
+            companyId,
+            name: candidate.displayName,
+            email: candidate.email,
+            phone: candidate.phone,
+            role: 'Decision Maker',
+            seniority: 'Executive',
+            status: 'new',
+            sourceCandidateId: candidate.id,
+          },
+        });
+      }
+    }
+
+    // 更新候选导入状态
+    await prisma.radarCandidate.update({
+      where: { id: candidateId },
+      data: {
+        importedToType: 'ProspectCompany',
+        importedToId: companyId,
+        importedAt: new Date(),
+        status: 'IMPORTED',
+      },
+    });
+
+    console.log(`[autoImportCandidate] Imported ${candidate.displayName} to company ${companyId}`);
+  } catch (error) {
+    console.error(`[autoImportCandidate] Failed to import ${candidateId}:`, error);
+    throw error;
+  }
+}
 
 /** 单条 upsert，返回 'created' | 'duplicate'（供批量事务使用） */
 async function processCandidateUpsert(

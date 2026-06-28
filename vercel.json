@@ -21,6 +21,7 @@
     { "path": "/api/cron/web-crawl",            "schedule": "0 0 * * *" },
     { "path": "/api/cron/geo-citation-check",   "schedule": "0 6 * * *" },
     { "path": "/api/cron/social-metrics-sync",  "schedule": "0 8 * * *" },
-    { "path": "/api/cron/social-publish",       "schedule": "0 0 * * *" }
+    { "path": "/api/cron/social-publish",       "schedule": "0 0 * * *" },
+    { "path": "/api/cron/cleanup-stuck-tasks",  "schedule": "*/5 * * * *" }
   ]
 }
