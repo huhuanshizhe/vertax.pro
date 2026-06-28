@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { toast } from "sonner";
-import { Eye, EyeOff, Save, RefreshCw, Check, X, ExternalLink } from "lucide-react";
+import { Eye, EyeOff, Save, RefreshCw, Check, X, ExternalLink, Activity, AlertCircle } from "lucide-react";
 
 // ==================== Service Configs ====================
 
@@ -168,16 +168,39 @@ interface ApiKeyConfig {
   source?: "database" | "env" | "none";
 }
 
+interface ApiHealthStatus {
+  code: string;
+  name: string;
+  category: string;
+  provider: string;
+  isConfigured: boolean;
+  isFree: boolean;
+  monthlyFreeQuota: number;
+  todayUsage: {
+    calls: number;
+    success: number;
+    errors: number;
+    lastError?: string;
+    lastErrorAt?: string;
+    avgLatencyMs: number;
+  };
+  quotaStatus: 'healthy' | 'warning' | 'exhausted' | 'unknown';
+  quotaMessage: string;
+}
+
 // ==================== Main Component ====================
 
 export default function TowerApiKeysPage() {
   const [configs, setConfigs] = useState<ApiKeyConfig[]>([]);
+  const [healthData, setHealthData] = useState<Map<string, ApiHealthStatus>>(new Map());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
+  const [testing, setTesting] = useState<string | null>(null);
 
   useEffect(() => {
     loadConfigs();
+    loadHealthData();
   }, []);
 
   const loadConfigs = async () => {
@@ -191,6 +214,52 @@ export default function TowerApiKeysPage() {
       toast.error("加载配置失败");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadHealthData = async () => {
+    try {
+      const response = await fetch("/api/admin/api-health");
+      if (response.ok) {
+        const data = await response.json();
+        const healthMap = new Map<string, ApiHealthStatus>();
+        for (const api of data.apis || []) {
+          healthMap.set(api.code, api);
+        }
+        setHealthData(healthMap);
+      }
+    } catch (error) {
+      console.error("Failed to load health data:", error);
+    }
+  };
+
+  const testConnection = async (service: string) => {
+    setTesting(service);
+    try {
+      // 调用健康检查端点测试连接
+      const response = await fetch("/api/admin/api-health");
+      if (response.ok) {
+        const data = await response.json();
+        const health = data.apis?.find((api: ApiHealthStatus) => api.code === service);
+
+        if (health?.isConfigured) {
+          if (health.todayUsage.errors === 0) {
+            toast.success(`${service} 连接正常，今日调用 ${health.todayUsage.calls} 次`);
+          } else {
+            toast.warning(`${service} 连接正常，但有 ${health.todayUsage.errors} 个错误`);
+          }
+          // 刷新健康数据
+          await loadHealthData();
+        } else {
+          toast.error(`${service} 未配置或连接失败`);
+        }
+      } else {
+        toast.error("测试连接失败");
+      }
+    } catch {
+      toast.error("测试连接失败");
+    } finally {
+      setTesting(null);
     }
   };
 
@@ -272,8 +341,27 @@ export default function TowerApiKeysPage() {
           <div className="grid gap-4 md:grid-cols-2">
             {services.map((sc) => {
               const config = getConfig(sc.service);
-              const isConfigured = !!config?.apiKey;
+              const health = healthData.get(sc.service);
+              const isConfigured = !!config?.apiKey || health?.isConfigured;
               const showKey = showKeys[sc.service];
+
+              // 获取部分 key 预览
+              const getKeyPreview = () => {
+                if (!config?.apiKey || config.apiKey === "************") {
+                  if (health?.isConfigured) {
+                    return `已配置 (${health.todayUsage.calls} 次调用)`;
+                  }
+                  return null;
+                }
+                // 显示前 4 位和后 4 位
+                const key = config.apiKey;
+                if (key.length > 12) {
+                  return `${key.slice(0, 4)}****${key.slice(-4)}`;
+                }
+                return key;
+              };
+
+              const keyPreview = getKeyPreview();
 
               return (
                 <div
@@ -316,16 +404,32 @@ export default function TowerApiKeysPage() {
                     <div className="space-y-1.5">
                       <div className="flex items-center justify-between">
                         <Label className="text-xs">API Key</Label>
-                        {sc.docUrl && (
-                          <a
-                            href={sc.docUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-[10px] text-blue-500 hover:underline flex items-center gap-0.5"
-                          >
-                            获取 <ExternalLink className="h-2.5 w-2.5" />
-                          </a>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {sc.docUrl && (
+                            <a
+                              href={sc.docUrl}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[10px] text-blue-500 hover:underline flex items-center gap-0.5"
+                            >
+                              获取 <ExternalLink className="h-2.5 w-2.5" />
+                            </a>
+                          )}
+                          {isConfigured && (
+                            <button
+                              onClick={() => testConnection(sc.service)}
+                              disabled={testing === sc.service}
+                              className="text-[10px] text-blue-500 hover:underline flex items-center gap-0.5 disabled:opacity-50"
+                            >
+                              {testing === sc.service ? (
+                                <RefreshCw className="h-2.5 w-2.5 animate-spin" />
+                              ) : (
+                                <Activity className="h-2.5 w-2.5" />
+                              )}
+                              测试
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div className="flex gap-2">
                         <div className="relative flex-1">
@@ -354,6 +458,11 @@ export default function TowerApiKeysPage() {
                           </button>
                         </div>
                       </div>
+                      {keyPreview && (
+                        <p className="text-[10px] text-gray-500 mt-1">
+                          {keyPreview}
+                        </p>
+                      )}
                     </div>
 
                     {sc.requiresSecret && (
@@ -369,10 +478,69 @@ export default function TowerApiKeysPage() {
                       </div>
                     )}
 
+                    {/* 健康状态和用量 */}
+                    {health && isConfigured && (
+                      <div className="pt-2 border-t border-gray-100 space-y-1.5">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            {health.quotaStatus === 'healthy' && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-green-50 text-green-600">
+                                <Activity className="h-2.5 w-2.5" />
+                                正常
+                              </span>
+                            )}
+                            {health.quotaStatus === 'warning' && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-yellow-50 text-yellow-600">
+                                <AlertCircle className="h-2.5 w-2.5" />
+                                警告
+                              </span>
+                            )}
+                            {health.quotaStatus === 'exhausted' && (
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-50 text-red-600">
+                                <X className="h-2.5 w-2.5" />
+                                耗尽
+                              </span>
+                            )}
+                          </div>
+                          {health.todayUsage.avgLatencyMs > 0 && (
+                            <span className="text-[10px] text-gray-400">
+                              平均延迟: {health.todayUsage.avgLatencyMs}ms
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-3 text-[10px] text-gray-400">
+                          <span>
+                            今日: {health.todayUsage.calls} 次调用
+                            {health.todayUsage.errors > 0 && (
+                              <span className="text-red-500"> ({health.todayUsage.errors} 错误)</span>
+                            )}
+                          </span>
+                          {health.monthlyFreeQuota > 0 && health.monthlyFreeQuota < 999999 && (
+                            <span>免费额度: {health.monthlyFreeQuota}/月</span>
+                          )}
+                        </div>
+                        {health.quotaMessage && (
+                          <p className="text-[10px] text-gray-500">{health.quotaMessage}</p>
+                        )}
+                        {health.todayUsage.lastError && (
+                          <p className="text-[10px] text-red-500">
+                            最近错误: {health.todayUsage.lastError.slice(0, 100)}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    {!isConfigured && (
+                      <div className="flex items-center justify-between pt-1">
+                        <div className="flex items-center gap-3 text-[10px] text-gray-400">
+                          {sc.freeQuota && <span>免费: {sc.freeQuota}</span>}
+                          {sc.pricing && <span>价格: {sc.pricing}</span>}
+                        </div>
+                      </div>
+                    )}
+
                     <div className="flex items-center justify-between pt-1">
                       <div className="flex items-center gap-3 text-[10px] text-gray-400">
-                        {sc.freeQuota && <span>免费: {sc.freeQuota}</span>}
-                        {sc.pricing && <span>价格: {sc.pricing}</span>}
                         {config && config.currentUsage > 0 && (
                           <span>
                             本月: {config.currentUsage}次
