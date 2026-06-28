@@ -1,20 +1,40 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
-import { requireDecider } from '@/lib/permissions';
+import { isPlatformAdminRoleName } from '@/lib/permissions';
 import { getAdapter, ensureAdaptersInitialized } from '@/lib/radar/adapters/registry';
+import { prisma } from '@/lib/prisma';
+
+async function getPlatformAdminUser(userId?: string) {
+  if (!userId) return null;
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { role: true },
+  });
+
+  if (!user || !isPlatformAdminRoleName(user.role.name)) {
+    return null;
+  }
+
+  return user;
+}
 
 /**
  * POST /api/admin/api-keys/test
  * 测试指定 API 的连接
  */
 export async function POST(req: NextRequest) {
-  const session = await auth();
-  const decider = requireDecider(session);
-  if (!decider.authorized) {
-    return NextResponse.json({ error: decider.error }, { status: 401 });
-  }
-
   try {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const user = await getPlatformAdminUser(session.user.id);
+    if (!user) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
     const { service } = await req.json();
     if (!service) {
       return NextResponse.json({ error: 'Service is required' }, { status: 400 });
