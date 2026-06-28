@@ -693,13 +693,23 @@ export async function parseCompanyProfileAnalysisResponse(
 ): Promise<Record<string, unknown>> {
   const parseErrors: string[] = [];
 
-  for (const candidate of collectJsonCandidates(content)) {
+  // 调试日志：记录输入内容的前 300 字符
+  console.log('[parseCompanyProfileAnalysisResponse] Input (first 300 chars):', content.substring(0, 300));
+
+  const candidates = collectJsonCandidates(content);
+  console.log('[parseCompanyProfileAnalysisResponse] Found', candidates.length, 'JSON candidates');
+
+  for (let i = 0; i < candidates.length; i++) {
+    const candidate = candidates[i];
+    console.log(`[parseCompanyProfileAnalysisResponse] Trying candidate ${i + 1} (length: ${candidate.length}):`, candidate.substring(0, 200));
     try {
-      return JSON.parse(candidate) as Record<string, unknown>;
+      const result = JSON.parse(candidate) as Record<string, unknown>;
+      console.log('[parseCompanyProfileAnalysisResponse] Successfully parsed candidate', i + 1);
+      return result;
     } catch (error) {
-      parseErrors.push(
-        `initial parse failed: ${error instanceof Error ? error.message : String(error)}`
-      );
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.log(`[parseCompanyProfileAnalysisResponse] Candidate ${i + 1} failed:`, errorMsg);
+      parseErrors.push(`initial parse failed: ${errorMsg}`);
     }
   }
 
@@ -1066,6 +1076,9 @@ export async function analyzeCompanyProfile(
 
   let jsonStr = response.content.trim();
 
+  // 调试日志：记录 AI 原始响应的前 500 字符
+  console.log('[analyzeCompanyProfile] AI response (first 500 chars):', jsonStr.substring(0, 500));
+
   // 从 markdown 代码块中提取 JSON（支持 AI 在代码块前后加说明文字）
   const codeBlockMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
   if (codeBlockMatch) {
@@ -1089,6 +1102,9 @@ export async function analyzeCompanyProfile(
       }
     }
   }
+
+  // 调试日志：记录提取后的 JSON 字符串前 500 字符
+  console.log('[analyzeCompanyProfile] Extracted JSON (first 500 chars):', jsonStr.substring(0, 500));
 
   const analysis = await parseCompanyProfileAnalysisResponse(jsonStr);
 
